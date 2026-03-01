@@ -196,6 +196,145 @@ export const dbOperations = {
   // Audit logs
   async getAuditLogs(limit = 50) {
     return request(`/audit-logs?limit=${limit}`);
+  },
+
+  // Workspace snapshot
+  async getStartupWorkspace(startupId) {
+    return request(`/startups/${startupId}/workspace`);
+  },
+
+  async logWorkspaceActivity(startupId, activity) {
+    return request(`/startups/${startupId}/activity`, {
+      method: 'POST',
+      body: JSON.stringify(activity)
+    });
+  },
+
+  // Reputation graph
+  async getStartupReputation(startupId) {
+    return request(`/startups/${startupId}/reputation`);
+  },
+
+  async getUserReputation(userId) {
+    return request(`/users/${userId}/reputation`);
+  },
+
+  async createPeerReview(startupId, review) {
+    return request(`/startups/${startupId}/reputation/reviews`, {
+      method: 'POST',
+      body: JSON.stringify(review)
+    });
+  },
+
+  // Governance decisions
+  async getDecisions(startupId) {
+    return request(`/startups/${startupId}/decisions`);
+  },
+
+  async createDecision(startupId, payload) {
+    return request(`/startups/${startupId}/decisions`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  async voteDecision(decisionId, payload) {
+    return request(`/decisions/${decisionId}/vote`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  // Founder vote
+  async getMemberVotes(startupId) {
+    return request(`/startups/${startupId}/member-votes`);
+  },
+
+  async createMemberVote(startupId, payload) {
+    return request(`/startups/${startupId}/member-votes`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  async castMemberVote(voteCaseId, payload) {
+    return request(`/member-votes/${voteCaseId}/cast`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  // Equity ledger
+  async getEquity(startupId) {
+    return request(`/startups/${startupId}/equity`);
+  },
+
+  async upsertEquity(startupId, payload) {
+    return request(`/startups/${startupId}/equity`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  async updateEquity(equityId, payload) {
+    return request(`/equity/${equityId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  async archiveEquity(equityId) {
+    return request(`/equity/${equityId}`, { method: 'DELETE' });
+  },
+
+  // Agreements + registry
+  async getAgreements(startupId) {
+    return request(`/startups/${startupId}/agreements`);
+  },
+
+  async createAgreement(startupId, payload) {
+    return request(`/startups/${startupId}/agreements`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  async updateAgreement(agreementId, payload) {
+    return request(`/agreements/${agreementId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  async updateStartupRegistry(startupId, payload) {
+    return request(`/startups/${startupId}/registry`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  // Investor flow
+  async getInvestorIntros(startupId) {
+    return request(`/startups/${startupId}/investor-intros`);
+  },
+
+  async createInvestorIntro(startupId, payload) {
+    return request(`/startups/${startupId}/investor-intros`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  async updateInvestorIntro(introId, payload) {
+    return request(`/investor-intros/${introId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  // AI risk
+  async getStartupAiRisk(startupId) {
+    return request(`/startups/${startupId}/ai-risk`);
   }
 };
 

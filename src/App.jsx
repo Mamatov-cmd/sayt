@@ -7,6 +7,7 @@ import Logo from './r.png';
 const ADMIN_EMAIL = 'mamatovo354@gmail.com';
 const ADMIN_PASS = '123@Ozod';
 const DEFAULT_CATEGORIES = ["Fintech", "Edtech", "AI/ML", "E-commerce", "SaaS", "Blockchain", "Healthcare", "Cybersecurity", "GameDev", "Networking", "Productivity", "Other"];
+const DEFAULT_SEGMENTS = ["IT Founder + Developer", "IT Founder + Designer", "IT Founder + Marketer", "IT Founder + Hardware"];
 
 // --- REUSABLE UI COMPONENTS ---
 const Badge = ({ children, variant = 'default', size = 'sm', className = "" }) => {
@@ -144,6 +145,9 @@ const App = () => {
   const [joinRequests, setJoinRequests] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [workspaceContext, setWorkspaceContext] = useState(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [profileReputation, setProfileReputation] = useState(null);
 
   // --- UI STATE ---
   const [activeTab, setActiveTab] = useState('explore');
@@ -159,9 +163,40 @@ const App = () => {
   const [aiLoading, setAiLoading] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState('vazifalar');
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [selectedSegment, setSelectedSegment] = useState('IT Founder + Developer');
   const [adminTab, setAdminTab] = useState('moderation');
   const [adminStats, setAdminStats] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [reviewDraft, setReviewDraft] = useState({
+    to_user_id: '',
+    rating: 5,
+    task_delivery: 5,
+    collaboration: 5,
+    reliability: 5,
+    comment: ''
+  });
+  const [decisionDraft, setDecisionDraft] = useState({ title: '', description: '' });
+  const [voteCaseDraft, setVoteCaseDraft] = useState({ target_user_id: '', reason: '' });
+  const [equityDraft, setEquityDraft] = useState({
+    user_id: '',
+    share_percent: '',
+    vesting_months: 48,
+    cliff_months: 12,
+    notes: ''
+  });
+  const [agreementDraft, setAgreementDraft] = useState({ title: '', body: '', status: 'draft' });
+  const [investorDraft, setInvestorDraft] = useState({
+    investor_name: '',
+    stage: 'seed',
+    amount: '',
+    status: 'planned',
+    notes: ''
+  });
+  const [registryDraft, setRegistryDraft] = useState({
+    lifecycle_status: 'live',
+    success_fee_percent: 1.5,
+    registry_notes: ''
+  });
   
   // Modals & Edit States
   const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
@@ -231,6 +266,31 @@ const App = () => {
     }
   };
 
+  const reloadStartups = async () => {
+    const fresh = await dbOperations.getStartups();
+    setStartups(fresh);
+  };
+
+  const loadWorkspaceContext = async (startupId) => {
+    if (!startupId) return;
+    try {
+      setWorkspaceLoading(true);
+      const workspace = await dbOperations.getStartupWorkspace(startupId);
+      setWorkspaceContext(workspace);
+      setRegistryDraft({
+        lifecycle_status: workspace?.startup?.lifecycle_status || 'live',
+        success_fee_percent: workspace?.startup?.success_fee_percent ?? 1.5,
+        registry_notes: workspace?.startup?.registry_notes || ''
+      });
+      setReviewDraft((prev) => ({ ...prev, to_user_id: '' }));
+    } catch (error) {
+      console.error('Workspace yuklashda xatolik:', error);
+      setWorkspaceContext(null);
+    } finally {
+      setWorkspaceLoading(false);
+    }
+  };
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [aiChat]);
@@ -240,6 +300,28 @@ const App = () => {
       refreshAdminData();
     }
   }, [activeTab, currentUser, adminTab]);
+
+  useEffect(() => {
+    if (activeTab === 'details' && selectedStartupId) {
+      loadWorkspaceContext(selectedStartupId);
+    }
+  }, [activeTab, selectedStartupId]);
+
+  useEffect(() => {
+    const loadProfileReputation = async () => {
+      if (!currentUser?.id || currentUser.id === 'admin') {
+        setProfileReputation(null);
+        return;
+      }
+      try {
+        const rep = await dbOperations.getUserReputation(currentUser.id);
+        setProfileReputation(rep);
+      } catch {
+        setProfileReputation(null);
+      }
+    };
+    loadProfileReputation();
+  }, [currentUser, startups]);
 
   // --- HANDLERS ---
 
@@ -416,6 +498,12 @@ const App = () => {
       const updatedAZolar = [...startup.a_zolar, newMember];
       
       await dbOperations.updateStartup(r.startup_id, { a_zolar: updatedAZolar });
+      await dbOperations.logWorkspaceActivity(r.startup_id, {
+        user_id: currentUser?.id || 'system',
+        activity_type: 'member_joined',
+        payload: { user_id: r.user_id, user_name: r.user_name, role: r.specialty },
+        hours_spent: 0
+      });
       
       setStartups(prev => prev.map(s => 
         s.id === r.startup_id ? { ...s, a_zolar: updatedAZolar } : s
@@ -568,7 +656,11 @@ const App = () => {
       tasks: [],
       views: 0,
       github_url: fd.get('github_url') || '',
-      website_url: fd.get('website_url') || ''
+      website_url: fd.get('website_url') || '',
+      segment: fd.get('segment') || 'IT Founder + Developer',
+      lifecycle_status: 'live',
+      success_fee_percent: 1.5,
+      registry_notes: ''
     };
     
     await dbOperations.createStartup(s);
@@ -618,6 +710,12 @@ const App = () => {
     const updatedTasks = [...(startup?.tasks || []), newTask];
     
     await dbOperations.updateStartup(startupId, { tasks: updatedTasks });
+    await dbOperations.logWorkspaceActivity(startupId, {
+      user_id: currentUser?.id || 'system',
+      activity_type: 'task_created',
+      payload: { task_id: newTask.id, title: newTask.title },
+      hours_spent: 0
+    });
     
     setStartups(prev => prev.map(s => 
       s.id === startupId ? { ...s, tasks: updatedTasks } : s
@@ -638,6 +736,12 @@ const App = () => {
     if (startup) {
       const updatedTasks = startup.tasks.map(t => t.id === taskId ? { ...t, status: newStatus } : t);
       await dbOperations.updateStartup(startupId, { tasks: updatedTasks });
+      await dbOperations.logWorkspaceActivity(startupId, {
+        user_id: currentUser?.id || 'system',
+        activity_type: 'task_status_changed',
+        payload: { task_id: taskId, status: newStatus },
+        hours_spent: 0
+      });
     }
   };
 
@@ -650,6 +754,12 @@ const App = () => {
     if (startup) {
       const updatedTasks = startup.tasks.filter(t => t.id !== taskId);
       await dbOperations.updateStartup(startupId, { tasks: updatedTasks });
+      await dbOperations.logWorkspaceActivity(startupId, {
+        user_id: currentUser?.id || 'system',
+        activity_type: 'task_deleted',
+        payload: { task_id: taskId },
+        hours_spent: 0
+      });
       
       setStartups(prev => prev.map(s => 
         s.id === startupId ? { ...s, tasks: updatedTasks } : s
@@ -725,14 +835,210 @@ const App = () => {
     setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, is_read: true } : n));
   };
 
+  const refreshWorkspaceAndStartup = async (startupId = selectedStartupId) => {
+    if (!startupId) return;
+    await Promise.all([loadWorkspaceContext(startupId), reloadStartups()]);
+  };
+
+  const handleSubmitPeerReview = async () => {
+    if (!selectedStartup || !currentUser) return;
+    if (!reviewDraft.to_user_id) return alert("Kimga baho berishni tanlang.");
+    try {
+      await dbOperations.createPeerReview(selectedStartup.id, {
+        from_user_id: currentUser.id,
+        to_user_id: reviewDraft.to_user_id,
+        rating: Number(reviewDraft.rating || 5),
+        task_delivery: Number(reviewDraft.task_delivery || 5),
+        collaboration: Number(reviewDraft.collaboration || 5),
+        reliability: Number(reviewDraft.reliability || 5),
+        comment: reviewDraft.comment || ''
+      });
+      setReviewDraft({
+        to_user_id: '',
+        rating: 5,
+        task_delivery: 5,
+        collaboration: 5,
+        reliability: 5,
+        comment: ''
+      });
+      await refreshWorkspaceAndStartup(selectedStartup.id);
+    } catch (e) {
+      alert("Peer review yuborishda xatolik.");
+    }
+  };
+
+  const handleCreateDecision = async () => {
+    if (!selectedStartup || !currentUser) return;
+    if (!decisionDraft.title.trim()) return alert("Qaror sarlavhasini kiriting.");
+    try {
+      await dbOperations.createDecision(selectedStartup.id, {
+        title: decisionDraft.title,
+        description: decisionDraft.description,
+        proposer_id: currentUser.id
+      });
+      setDecisionDraft({ title: '', description: '' });
+      await refreshWorkspaceAndStartup(selectedStartup.id);
+    } catch (e) {
+      alert("Qaror yaratishda xatolik.");
+    }
+  };
+
+  const handleVoteDecision = async (decisionId, vote) => {
+    if (!currentUser) return;
+    try {
+      await dbOperations.voteDecision(decisionId, { voter_id: currentUser.id, vote });
+      await refreshWorkspaceAndStartup(selectedStartup?.id);
+    } catch (e) {
+      alert("Ovoz berishda xatolik.");
+    }
+  };
+
+  const handleCreateMemberVote = async () => {
+    if (!selectedStartup || !currentUser) return;
+    if (!voteCaseDraft.target_user_id || !voteCaseDraft.reason.trim()) {
+      return alert("Target va sabab majburiy.");
+    }
+    try {
+      await dbOperations.createMemberVote(selectedStartup.id, {
+        target_user_id: voteCaseDraft.target_user_id,
+        reason: voteCaseDraft.reason,
+        proposer_id: currentUser.id
+      });
+      setVoteCaseDraft({ target_user_id: '', reason: '' });
+      await refreshWorkspaceAndStartup(selectedStartup.id);
+    } catch (e) {
+      alert("Founder vote ochishda xatolik.");
+    }
+  };
+
+  const handleCastMemberVote = async (voteCaseId, vote) => {
+    if (!currentUser) return;
+    try {
+      await dbOperations.castMemberVote(voteCaseId, { voter_id: currentUser.id, vote });
+      await refreshWorkspaceAndStartup(selectedStartup?.id);
+    } catch (e) {
+      alert("Founder vote ovozida xatolik.");
+    }
+  };
+
+  const handleUpsertEquity = async () => {
+    if (!selectedStartup || !currentUser) return;
+    if (!equityDraft.user_id || !equityDraft.share_percent) return alert("A'zo va ulush foizini kiriting.");
+    try {
+      await dbOperations.upsertEquity(selectedStartup.id, {
+        user_id: equityDraft.user_id,
+        share_percent: Number(equityDraft.share_percent),
+        vesting_months: Number(equityDraft.vesting_months || 48),
+        cliff_months: Number(equityDraft.cliff_months || 12),
+        notes: equityDraft.notes,
+        status: 'active'
+      });
+      setEquityDraft({
+        user_id: '',
+        share_percent: '',
+        vesting_months: 48,
+        cliff_months: 12,
+        notes: ''
+      });
+      await refreshWorkspaceAndStartup(selectedStartup.id);
+    } catch (e) {
+      alert("Equity yozishda xatolik.");
+    }
+  };
+
+  const handleArchiveEquity = async (equityId) => {
+    if (!confirm("Bu equity yozuvini arxiv qilasizmi?")) return;
+    try {
+      await dbOperations.archiveEquity(equityId);
+      await refreshWorkspaceAndStartup(selectedStartup?.id);
+    } catch (e) {
+      alert("Equity arxivlashda xatolik.");
+    }
+  };
+
+  const handleCreateAgreement = async () => {
+    if (!selectedStartup) return;
+    if (!agreementDraft.title.trim() || !agreementDraft.body.trim()) {
+      return alert("Agreement title va body majburiy.");
+    }
+    try {
+      await dbOperations.createAgreement(selectedStartup.id, {
+        title: agreementDraft.title,
+        body: agreementDraft.body,
+        status: agreementDraft.status,
+        signed_by: []
+      });
+      setAgreementDraft({ title: '', body: '', status: 'draft' });
+      await refreshWorkspaceAndStartup(selectedStartup.id);
+    } catch (e) {
+      alert("Agreement yaratishda xatolik.");
+    }
+  };
+
+  const handleSignAgreement = async (agreement) => {
+    if (!currentUser) return;
+    const signedBy = Array.isArray(agreement.signed_by) ? agreement.signed_by : [];
+    if (signedBy.includes(currentUser.id)) return;
+    try {
+      await dbOperations.updateAgreement(agreement.id, {
+        signed_by: [...signedBy, currentUser.id],
+        status: 'active'
+      });
+      await refreshWorkspaceAndStartup(selectedStartup?.id);
+    } catch (e) {
+      alert("Agreement imzolashda xatolik.");
+    }
+  };
+
+  const handleCreateInvestorIntro = async () => {
+    if (!selectedStartup || !currentUser) return;
+    if (!investorDraft.investor_name.trim()) return alert("Investor nomini kiriting.");
+    try {
+      await dbOperations.createInvestorIntro(selectedStartup.id, {
+        investor_name: investorDraft.investor_name,
+        introduced_by: currentUser.id,
+        stage: investorDraft.stage,
+        amount: Number(investorDraft.amount || 0),
+        status: investorDraft.status,
+        notes: investorDraft.notes
+      });
+      setInvestorDraft({
+        investor_name: '',
+        stage: 'seed',
+        amount: '',
+        status: 'planned',
+        notes: ''
+      });
+      await refreshWorkspaceAndStartup(selectedStartup.id);
+    } catch (e) {
+      alert("Investor introduction yaratishda xatolik.");
+    }
+  };
+
+  const handleUpdateRegistry = async () => {
+    if (!selectedStartup || !currentUser) return;
+    try {
+      await dbOperations.updateStartupRegistry(selectedStartup.id, {
+        lifecycle_status: registryDraft.lifecycle_status,
+        success_fee_percent: Number(registryDraft.success_fee_percent || 1.5),
+        registry_notes: registryDraft.registry_notes,
+        actor_id: currentUser.id
+      });
+      await refreshWorkspaceAndStartup(selectedStartup.id);
+    } catch (e) {
+      alert("Registry yangilashda xatolik.");
+    }
+  };
+
   // --- FILTERS ---
   const filtered = useMemo(() => {
     return startups.filter(s => 
       s.status === 'approved' && 
+      (selectedSegment === 'All' || (s.segment || 'IT Founder + Developer') === selectedSegment) &&
       (selectedCategory === 'All' || s.category === selectedCategory) &&
       (s.nomi.toLowerCase().includes(searchTerm.toLowerCase()) || s.tavsif.toLowerCase().includes(searchTerm.toLowerCase()))
     );
-  }, [startups, selectedCategory, searchTerm]);
+  }, [startups, selectedCategory, selectedSegment, searchTerm]);
 
   const myStartups = useMemo(() => 
     currentUser ? startups.filter(s => s.egasi_id === currentUser.id || s.a_zolar.some(m => m.user_id === currentUser.id)) : [], 
@@ -752,6 +1058,18 @@ const App = () => {
   const unreadNotifCount = userNotifications.filter(n => !n.is_read).length;
 
   const selectedStartup = startups.find(s => s.id === selectedStartupId);
+  const workspaceData = workspaceContext || {};
+  const workspaceReputation = workspaceData.reputation || { members: [], edges: [] };
+  const workspaceDecisions = workspaceData.decisions || [];
+  const workspaceMemberVotes = workspaceData.member_votes || [];
+  const workspaceEquity = workspaceData.equity || [];
+  const workspaceAgreements = workspaceData.agreements || [];
+  const workspaceInvestorIntros = workspaceData.investor_intros || [];
+  const workspaceReviews = workspaceData.reviews || [];
+  const workspaceAiRisk = workspaceData.ai_risk || null;
+  const equityTotal = workspaceEquity
+    .filter((e) => e.status !== 'archived')
+    .reduce((acc, e) => acc + Number(e.share_percent || 0), 0);
 
   // --- RENDERERS ---
 
@@ -834,6 +1152,17 @@ const App = () => {
           />
         </div>
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 pb-2 md:mx-0 md:px-0">
+          {['All', ...DEFAULT_SEGMENTS].map(seg => (
+            <button
+              key={seg}
+              onClick={() => setSelectedSegment(seg)}
+              className={`h-8 px-4 rounded-full text-[11px] font-semibold border transition-all whitespace-nowrap ${selectedSegment === seg ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-emerald-600 hover:text-emerald-700'}`}
+            >
+              {seg}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 pb-2 md:mx-0 md:px-0">
           {['All', ...categories].map(c => (
             <button 
               key={c} onClick={() => setSelectedCategory(c)} 
@@ -850,7 +1179,10 @@ const App = () => {
           <div key={s.id} onClick={() => navigateTo('details', s.id)} className="bg-white border border-gray-100 rounded-xl p-5 md:p-6 flex flex-col hover:border-black hover:shadow-lg transition-all group relative overflow-hidden cursor-pointer">
             <div className="flex items-start justify-between mb-4 md:mb-6">
               <img src={s.logo} className="w-12 h-12 md:w-14 md:h-14 bg-gray-50 object-cover rounded-lg border border-gray-100 shadow-sm" alt="Logo" />
-              <Badge>{s.category}</Badge>
+              <div className="flex flex-col items-end gap-2">
+                <Badge>{s.category}</Badge>
+                <span className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-full">{s.segment || 'IT Founder + Developer'}</span>
+              </div>
             </div>
             <div className="flex-grow space-y-2 md:space-y-3 mb-6 md:mb-8">
               <h3 className="text-base md:text-[18px] font-extrabold text-gray-900 tracking-tight leading-tight group-hover:pl-1 transition-all">{s.nomi}</h3>
@@ -906,6 +1238,14 @@ const App = () => {
                 {categories.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
+          </div>
+
+          <div className="space-y-1.5 w-full">
+            <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-widest ml-1">Fokus segment</label>
+            <select name="segment" defaultValue="IT Founder + Developer" className="w-full h-[44px] bg-white border border-gray-200 rounded-lg px-4 text-[14px] outline-none focus:border-emerald-600 shadow-sm">
+              {DEFAULT_SEGMENTS.map(seg => <option key={seg} value={seg}>{seg}</option>)}
+            </select>
+            <p className="text-[11px] text-gray-500 ml-1">Boshlanish uchun faqat IT founder + developer segmentini tavsiya qilamiz.</p>
           </div>
 
           <TextArea required name="tavsif" label="Tavsif" placeholder="Startupingizning asosiy maqsadi..." />
@@ -991,6 +1331,7 @@ const App = () => {
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-3xl md:text-4xl font-extrabold tracking-tighter italic leading-none">{selectedStartup.nomi}</h1>
               <Badge variant="active" size="md">{selectedStartup.category}</Badge>
+              <Badge size="md" className="!bg-emerald-50 !border-emerald-200 !text-emerald-700">{selectedStartup.segment || 'IT Founder + Developer'}</Badge>
               <Badge variant={selectedStartup.status === 'approved' ? 'success' : 'default'} size="md">{selectedStartup.status === 'approved' ? 'Faol' : 'Moderatsiyada'}</Badge>
             </div>
             <p className="text-gray-500 text-[14px] md:text-[16px] max-w-2xl leading-relaxed italic">"{selectedStartup.tavsif}"</p>
@@ -1007,16 +1348,32 @@ const App = () => {
         </header>
 
         <nav className="flex items-center border-b border-gray-100 gap-6 md:gap-8 h-10 overflow-x-auto no-scrollbar scroll-smooth">
-          {['Vazifalar', 'Jamoa', 'Sozlamalar'].map((tab) => (
+          {[
+            { key: 'vazifalar', label: 'Vazifalar' },
+            { key: 'reputatsiya', label: 'Reputatsiya' },
+            { key: 'governance', label: 'Governance' },
+            { key: 'kapital', label: 'Equity' },
+            { key: 'registry', label: 'Registry' },
+            { key: 'airadar', label: 'AI Radar' },
+            { key: 'jamoa', label: 'Jamoa' },
+            { key: 'sozlamalar', label: 'Sozlamalar' }
+          ].map((tab) => (
             <button 
-              key={tab} 
-              onClick={() => setActiveDetailTab(tab.toLowerCase())}
-              className={`h-full uppercase text-[11px] md:text-[12px] font-extrabold tracking-widest transition-all px-2 border-b-2 whitespace-nowrap ${activeDetailTab === tab.toLowerCase() ? 'border-black text-black' : 'border-transparent text-gray-400 hover:text-black'}`}
+              key={tab.key} 
+              onClick={() => setActiveDetailTab(tab.key)}
+              className={`h-full uppercase text-[11px] md:text-[12px] font-extrabold tracking-widest transition-all px-2 border-b-2 whitespace-nowrap ${activeDetailTab === tab.key ? 'border-black text-black' : 'border-transparent text-gray-400 hover:text-black'}`}
             >
-              {tab}
+              {tab.label}
             </button>
           ))}
         </nav>
+
+        {workspaceLoading && (
+          <div className="mt-4 flex items-center gap-2 text-[11px] uppercase tracking-widest font-bold text-emerald-700">
+            <i className="fa-solid fa-spinner animate-spin"></i>
+            Workspace loading...
+          </div>
+        )}
 
         <div className="min-h-[400px]">
           {activeDetailTab === 'vazifalar' && (
@@ -1068,6 +1425,414 @@ const App = () => {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {activeDetailTab === 'reputatsiya' && (
+            <div className="space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                {workspaceReputation.members.map((m) => (
+                  <div key={m.user_id} className="bg-gradient-to-br from-emerald-50 via-white to-teal-50 border border-emerald-100 rounded-2xl p-5 space-y-3 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[12px] font-bold uppercase tracking-widest text-emerald-700">{m.role}</p>
+                      <span className="text-[26px] font-black text-emerald-700">{m.score}</span>
+                    </div>
+                    <div>
+                      <p className="text-[15px] font-bold">{m.user_name}</p>
+                      <p className="text-[11px] text-gray-500">Avg rating: {m.avg_rating} / 5 ({m.reviews_count})</p>
+                      <p className="text-[11px] text-gray-500">Task completion: {m.completion_rate}%</p>
+                    </div>
+                  </div>
+                ))}
+                {workspaceReputation.members.length === 0 && (
+                  <EmptyState icon="fa-chart-line" title="Reputatsiya ma'lumoti yo'q" subtitle="Peer reviewlar boshlangandan keyin grafik chiqadi." />
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Peer Review Qo'shish</h3>
+                  {(isOwner || isMember) ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <select
+                          value={reviewDraft.to_user_id}
+                          onChange={(e) => setReviewDraft((p) => ({ ...p, to_user_id: e.target.value }))}
+                          className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]"
+                        >
+                          <option value="">Teammate tanlang</option>
+                          {selectedStartup.a_zolar.filter((m) => m.user_id !== currentUser?.id).map((m) => (
+                            <option key={m.user_id} value={m.user_id}>{m.name}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={reviewDraft.rating}
+                          onChange={(e) => setReviewDraft((p) => ({ ...p, rating: Number(e.target.value) }))}
+                          className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]"
+                        >
+                          {[5, 4, 3, 2, 1].map((s) => <option key={s} value={s}>Overall rating: {s}</option>)}
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <select
+                          value={reviewDraft.task_delivery}
+                          onChange={(e) => setReviewDraft((p) => ({ ...p, task_delivery: Number(e.target.value) }))}
+                          className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]"
+                        >
+                          {[5, 4, 3, 2, 1].map((s) => <option key={s} value={s}>Delivery {s}/5</option>)}
+                        </select>
+                        <select
+                          value={reviewDraft.collaboration}
+                          onChange={(e) => setReviewDraft((p) => ({ ...p, collaboration: Number(e.target.value) }))}
+                          className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]"
+                        >
+                          {[5, 4, 3, 2, 1].map((s) => <option key={s} value={s}>Collab {s}/5</option>)}
+                        </select>
+                        <select
+                          value={reviewDraft.reliability}
+                          onChange={(e) => setReviewDraft((p) => ({ ...p, reliability: Number(e.target.value) }))}
+                          className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]"
+                        >
+                          {[5, 4, 3, 2, 1].map((s) => <option key={s} value={s}>Reliability {s}/5</option>)}
+                        </select>
+                      </div>
+                      <textarea
+                        value={reviewDraft.comment}
+                        onChange={(e) => setReviewDraft((p) => ({ ...p, comment: e.target.value }))}
+                        placeholder="Ish sifati bo'yicha izoh..."
+                        className="w-full min-h-[90px] border border-gray-200 rounded-lg p-3 text-[13px]"
+                      />
+                      <Button onClick={handleSubmitPeerReview} className="w-full md:w-auto">Review yuborish</Button>
+                    </div>
+                  ) : (
+                    <p className="text-[12px] text-gray-500">Review yuborish uchun jamoa a'zosi bo'lish kerak.</p>
+                  )}
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Collaboration Graph</h3>
+                  <div className="space-y-3 max-h-[320px] overflow-y-auto custom-scrollbar pr-2">
+                    {workspaceReputation.edges.map((edge, idx) => (
+                      <div key={`${edge.source}_${edge.target}_${idx}`} className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+                        <p className="text-[12px] font-semibold text-gray-700">{`${edge.source} -> ${edge.target}`}</p>
+                        <p className="text-[11px] text-gray-500">Interactions: {edge.interactions} | Avg rating: {edge.avg_rating}</p>
+                      </div>
+                    ))}
+                    {workspaceReputation.edges.length === 0 && (
+                      <p className="text-[12px] text-gray-500">Hali graph edge yo'q.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-3">
+                <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">So'nggi Reviewlar</h3>
+                {workspaceReviews.slice(0, 8).map((r) => (
+                  <div key={r.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/60">
+                      <p className="text-[12px] font-bold text-gray-800">{`${r.from_user_name} -> ${r.to_user_name}`}</p>
+                    <p className="text-[11px] text-gray-500">Overall {r.rating}/5 | Delivery {r.task_delivery}/5 | Collab {r.collaboration}/5 | Reliability {r.reliability}/5</p>
+                    {r.comment && <p className="text-[12px] text-gray-700 mt-2">{r.comment}</p>}
+                    <p className="text-[10px] text-gray-400 mt-2">{new Date(r.created_at).toLocaleString()}</p>
+                  </div>
+                ))}
+                {workspaceReviews.length === 0 && <p className="text-[12px] text-gray-500">Hali review yo'q.</p>}
+              </div>
+            </div>
+          )}
+
+          {activeDetailTab === 'governance' && (
+            <div className="space-y-8">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Qaror taklifi</h3>
+                  {(isOwner || isMember) ? (
+                    <>
+                      <Input
+                        label="Qaror sarlavhasi"
+                        value={decisionDraft.title}
+                        onChange={(e) => setDecisionDraft((p) => ({ ...p, title: e.target.value }))}
+                        placeholder="Masalan: Product pivot"
+                      />
+                      <TextArea
+                        label="Izoh"
+                        value={decisionDraft.description}
+                        onChange={(e) => setDecisionDraft((p) => ({ ...p, description: e.target.value }))}
+                        placeholder="Nega bu qaror kerak?"
+                      />
+                      <Button onClick={handleCreateDecision}>Qaror ochish</Button>
+                    </>
+                  ) : (
+                    <p className="text-[12px] text-gray-500">Faqat jamoa a'zolari qaror ochadi.</p>
+                  )}
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Founder Vote (Kim qoladi/kim chiqadi)</h3>
+                  {(isOwner || isMember) ? (
+                    <>
+                      <select
+                        value={voteCaseDraft.target_user_id}
+                        onChange={(e) => setVoteCaseDraft((p) => ({ ...p, target_user_id: e.target.value }))}
+                        className="h-10 px-3 border border-gray-200 rounded-lg text-[13px] w-full"
+                      >
+                        <option value="">A'zo tanlang</option>
+                        {selectedStartup.a_zolar.filter((m) => m.user_id !== currentUser?.id).map((m) => (
+                          <option key={m.user_id} value={m.user_id}>{m.name}</option>
+                        ))}
+                      </select>
+                      <TextArea
+                        label="Sabab"
+                        value={voteCaseDraft.reason}
+                        onChange={(e) => setVoteCaseDraft((p) => ({ ...p, reason: e.target.value }))}
+                        placeholder="Aniq sabab yozing..."
+                      />
+                      <Button onClick={handleCreateMemberVote} variant="danger">Founder vote ochish</Button>
+                    </>
+                  ) : (
+                    <p className="text-[12px] text-gray-500">Faqat jamoa a'zolari founder vote ochadi.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-3">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Qarorlar</h3>
+                  {workspaceDecisions.map((d) => (
+                    <div key={d.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/40">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-[13px] font-bold">{d.title}</p>
+                        <Badge variant={d.status === 'approved' ? 'success' : d.status === 'rejected' ? 'danger' : 'default'}>{d.status}</Badge>
+                      </div>
+                      {d.description && <p className="text-[12px] text-gray-600 mt-2">{d.description}</p>}
+                      <p className="text-[11px] text-gray-500 mt-2">Approve: {d.votes?.approve || 0} | Reject: {d.votes?.reject || 0}</p>
+                      {d.status === 'open' && (isOwner || isMember) && (
+                        <div className="flex gap-2 mt-3">
+                          <Button size="sm" onClick={() => handleVoteDecision(d.id, 'approve')}>Approve</Button>
+                          <Button size="sm" variant="danger" onClick={() => handleVoteDecision(d.id, 'reject')}>Reject</Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {workspaceDecisions.length === 0 && <p className="text-[12px] text-gray-500">Qarorlar yo'q.</p>}
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-3">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Founder Vote Cases</h3>
+                  {workspaceMemberVotes.map((v) => (
+                    <div key={v.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/40">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-[13px] font-bold">{v.target_user_name}</p>
+                        <Badge variant={v.status === 'resolved' ? 'active' : 'default'}>{v.status}{v.resolution ? `:${v.resolution}` : ''}</Badge>
+                      </div>
+                      <p className="text-[12px] text-gray-600 mt-2">{v.reason}</p>
+                      <p className="text-[11px] text-gray-500 mt-2">Keep: {v.votes?.keep || 0} | Remove: {v.votes?.remove || 0}</p>
+                      {v.status === 'open' && (isOwner || isMember) && currentUser?.id !== v.target_user_id && (
+                        <div className="flex gap-2 mt-3">
+                          <Button size="sm" variant="secondary" onClick={() => handleCastMemberVote(v.id, 'keep')}>Keep</Button>
+                          <Button size="sm" variant="danger" onClick={() => handleCastMemberVote(v.id, 'remove')}>Remove</Button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {workspaceMemberVotes.length === 0 && <p className="text-[12px] text-gray-500">Founder vote case yo'q.</p>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeDetailTab === 'kapital' && (
+            <div className="space-y-8">
+              <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Equity Ledger</h3>
+                  <Badge variant={Math.round(equityTotal) === 100 ? 'success' : 'danger'}>{equityTotal.toFixed(2)}%</Badge>
+                </div>
+                <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                  <div className={`h-full ${Math.round(equityTotal) === 100 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${Math.min(equityTotal, 100)}%` }} />
+                </div>
+                <p className="text-[12px] text-gray-500">Ideal balans: 100%. Platforma equity nomutanosib bo'lsa AI Radar signal beradi.</p>
+              </div>
+
+              {isOwner && (
+                <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Ulush qo'shish / yangilash</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+                    <select value={equityDraft.user_id} onChange={(e) => setEquityDraft((p) => ({ ...p, user_id: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]">
+                      <option value="">A'zo</option>
+                      {selectedStartup.a_zolar.map((m) => <option key={m.user_id} value={m.user_id}>{m.name}</option>)}
+                    </select>
+                    <input type="number" value={equityDraft.share_percent} onChange={(e) => setEquityDraft((p) => ({ ...p, share_percent: e.target.value }))} placeholder="Share %" className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]" />
+                    <input type="number" value={equityDraft.vesting_months} onChange={(e) => setEquityDraft((p) => ({ ...p, vesting_months: e.target.value }))} placeholder="Vesting oy" className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]" />
+                    <input type="number" value={equityDraft.cliff_months} onChange={(e) => setEquityDraft((p) => ({ ...p, cliff_months: e.target.value }))} placeholder="Cliff oy" className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]" />
+                    <Button onClick={handleUpsertEquity}>Saqlash</Button>
+                  </div>
+                  <textarea value={equityDraft.notes} onChange={(e) => setEquityDraft((p) => ({ ...p, notes: e.target.value }))} placeholder="Equity note..." className="w-full min-h-[80px] border border-gray-200 rounded-lg p-3 text-[13px]" />
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {workspaceEquity.map((e) => (
+                  <div key={e.id} className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center gap-4">
+                    <div className="flex-grow">
+                      <p className="text-[14px] font-bold">{e.user_name}</p>
+                      <p className="text-[12px] text-gray-500">{e.share_percent}% | Vesting {e.vesting_months} oy | Cliff {e.cliff_months} oy</p>
+                      {e.notes && <p className="text-[12px] text-gray-600 mt-1">{e.notes}</p>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={e.status === 'active' ? 'success' : 'default'}>{e.status}</Badge>
+                      {isOwner && e.status !== 'archived' && <Button size="sm" variant="ghost" className="border border-gray-200" onClick={() => handleArchiveEquity(e.id)}>Archive</Button>}
+                    </div>
+                  </div>
+                ))}
+                {workspaceEquity.length === 0 && <p className="text-[12px] text-gray-500">Equity hali kiritilmagan.</p>}
+              </div>
+            </div>
+          )}
+
+          {activeDetailTab === 'registry' && (
+            <div className="space-y-8">
+              <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
+                <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Startup Registry</h3>
+                {isOwner ? (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <select value={registryDraft.lifecycle_status} onChange={(e) => setRegistryDraft((p) => ({ ...p, lifecycle_status: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]">
+                        <option value="live">live</option>
+                        <option value="pivoted">pivoted</option>
+                        <option value="closed">closed</option>
+                        <option value="acquired">acquired</option>
+                      </select>
+                      <input type="number" step="0.1" value={registryDraft.success_fee_percent} onChange={(e) => setRegistryDraft((p) => ({ ...p, success_fee_percent: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]" placeholder="Success fee %" />
+                      <Button onClick={handleUpdateRegistry}>Registry yangilash</Button>
+                    </div>
+                    <textarea value={registryDraft.registry_notes} onChange={(e) => setRegistryDraft((p) => ({ ...p, registry_notes: e.target.value }))} className="w-full min-h-[90px] border border-gray-200 rounded-lg p-3 text-[13px]" placeholder="Safekeeping va startup registry izohi..." />
+                  </>
+                ) : (
+                  <p className="text-[12px] text-gray-500">Lifecycle: {registryDraft.lifecycle_status} | Success fee: {registryDraft.success_fee_percent}%</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Safekeeping Agreements</h3>
+                  {isOwner && (
+                    <div className="space-y-3">
+                      <input value={agreementDraft.title} onChange={(e) => setAgreementDraft((p) => ({ ...p, title: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px] w-full" placeholder="Agreement nomi" />
+                      <textarea value={agreementDraft.body} onChange={(e) => setAgreementDraft((p) => ({ ...p, body: e.target.value }))} className="w-full min-h-[90px] border border-gray-200 rounded-lg p-3 text-[13px]" placeholder="Kelishuv matni..." />
+                      <select value={agreementDraft.status} onChange={(e) => setAgreementDraft((p) => ({ ...p, status: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px] w-full">
+                        <option value="draft">draft</option>
+                        <option value="active">active</option>
+                        <option value="locked">locked</option>
+                      </select>
+                      <Button onClick={handleCreateAgreement}>Agreement yaratish</Button>
+                    </div>
+                  )}
+                  <div className="space-y-3">
+                    {workspaceAgreements.map((a) => (
+                      <div key={a.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/40">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[13px] font-bold">{a.title}</p>
+                          <Badge>{a.status}</Badge>
+                        </div>
+                        <p className="text-[12px] text-gray-600 mt-2 whitespace-pre-wrap">{a.body}</p>
+                        <p className="text-[11px] text-gray-500 mt-2">Imzolaganlar: {(a.signed_by || []).length}</p>
+                        {currentUser && !(a.signed_by || []).includes(currentUser.id) && (isOwner || isMember) && (
+                          <Button size="sm" variant="secondary" className="mt-3" onClick={() => handleSignAgreement(a)}>Sign</Button>
+                        )}
+                      </div>
+                    ))}
+                    {workspaceAgreements.length === 0 && <p className="text-[12px] text-gray-500">Agreement yo'q.</p>}
+                  </div>
+                </div>
+
+                <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Investor Introduction Log</h3>
+                  {(isOwner || isMember) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <input value={investorDraft.investor_name} onChange={(e) => setInvestorDraft((p) => ({ ...p, investor_name: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]" placeholder="Investor nomi" />
+                      <select value={investorDraft.stage} onChange={(e) => setInvestorDraft((p) => ({ ...p, stage: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]">
+                        <option value="pre-seed">pre-seed</option>
+                        <option value="seed">seed</option>
+                        <option value="series-a">series-a</option>
+                      </select>
+                      <input type="number" value={investorDraft.amount} onChange={(e) => setInvestorDraft((p) => ({ ...p, amount: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]" placeholder="Amount (USD)" />
+                      <select value={investorDraft.status} onChange={(e) => setInvestorDraft((p) => ({ ...p, status: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]">
+                        <option value="planned">planned</option>
+                        <option value="introduced">introduced</option>
+                        <option value="meeting">meeting</option>
+                        <option value="won">won</option>
+                        <option value="lost">lost</option>
+                      </select>
+                      <textarea value={investorDraft.notes} onChange={(e) => setInvestorDraft((p) => ({ ...p, notes: e.target.value }))} className="md:col-span-2 w-full min-h-[80px] border border-gray-200 rounded-lg p-3 text-[13px]" placeholder="Notes..." />
+                      <Button onClick={handleCreateInvestorIntro} className="md:col-span-2">Investor log qo'shish</Button>
+                    </div>
+                  )}
+                  <div className="space-y-3">
+                    {workspaceInvestorIntros.map((i) => (
+                      <div key={i.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/40">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[13px] font-bold">{i.investor_name}</p>
+                          <Badge>{i.status}</Badge>
+                        </div>
+                        <p className="text-[12px] text-gray-600 mt-2">Stage: {i.stage} | Amount: ${Number(i.amount || 0).toLocaleString()}</p>
+                        <p className="text-[11px] text-gray-500 mt-1">By: {i.introduced_by_name || i.introduced_by}</p>
+                        {i.notes && <p className="text-[12px] text-gray-600 mt-2">{i.notes}</p>}
+                      </div>
+                    ))}
+                    {workspaceInvestorIntros.length === 0 && <p className="text-[12px] text-gray-500">Investor intro log yo'q.</p>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeDetailTab === 'airadar' && (
+            <div className="space-y-8">
+              {workspaceAiRisk ? (
+                <>
+                  <div className="bg-gradient-to-br from-slate-900 via-gray-900 to-black text-white rounded-2xl p-8 border border-slate-700 shadow-2xl">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.25em] text-slate-300 font-bold">AI Decision Engine</p>
+                        <h3 className="text-3xl font-black mt-2">Risk Score: {workspaceAiRisk.score}/100</h3>
+                        <p className="text-[13px] text-slate-300 mt-2">Level: {workspaceAiRisk.level}</p>
+                      </div>
+                      <div className="w-32 h-32 rounded-full border-8 border-white/20 flex items-center justify-center text-3xl font-black bg-white/5">
+                        {workspaceAiRisk.score}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { label: 'Overdue', value: workspaceAiRisk.metrics?.overdue_tasks ?? 0 },
+                      { label: 'Stalled', value: workspaceAiRisk.metrics?.stalled_tasks ?? 0 },
+                      { label: 'Completion', value: `${workspaceAiRisk.metrics?.completion_rate ?? 0}%` },
+                      { label: 'Activity 7d', value: workspaceAiRisk.metrics?.activity_7d ?? 0 }
+                    ].map((m, idx) => (
+                      <div key={idx} className="bg-white border border-gray-200 rounded-xl p-5 text-center">
+                        <p className="text-2xl font-black">{m.value}</p>
+                        <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mt-1">{m.label}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-3">
+                    <h4 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Risk Signals</h4>
+                    {workspaceAiRisk.signals?.map((s, idx) => (
+                      <div key={idx} className={`border rounded-xl p-4 ${s.level === 'high' ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`}>
+                        <p className="text-[11px] uppercase tracking-widest font-bold">{s.type} / {s.level}</p>
+                        <p className="text-[13px] mt-1">{s.text}</p>
+                      </div>
+                    ))}
+                    {(!workspaceAiRisk.signals || workspaceAiRisk.signals.length === 0) && (
+                      <p className="text-[12px] text-gray-500">Xavf signal topilmadi, jamoa sog'lom ishlayapti.</p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <EmptyState icon="fa-brain" title="AI risk hisoblanmadi" subtitle="Workspace ma'lumotlarini to'ldiring va qayta urinib ko'ring." />
+              )}
             </div>
           )}
 
@@ -1149,6 +1914,30 @@ const App = () => {
             </div>
           ))}
         </div>
+
+        {profileReputation && (
+          <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 rounded-2xl p-6 md:p-8 text-white shadow-xl">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.25em] font-bold text-white/80">Reputation Graph</p>
+                <h3 className="text-3xl md:text-4xl font-black mt-2">{profileReputation.score}/100</h3>
+                <p className="text-[13px] mt-2 text-white/90">
+                  Network: {profileReputation.stats?.network_size || 0} | Collaboration: {profileReputation.stats?.collaboration_count || 0} projects
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 w-full md:w-auto">
+                <div className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-center">
+                  <p className="text-xl font-black">{profileReputation.stats?.avg_rating || 0}</p>
+                  <p className="text-[10px] uppercase tracking-widest">Avg Rating</p>
+                </div>
+                <div className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-center">
+                  <p className="text-xl font-black">{profileReputation.stats?.completion_rate || 0}%</p>
+                  <p className="text-[10px] uppercase tracking-widest">Delivery</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="space-y-4 md:space-y-6 px-2">
           <h3 className="text-[11px] md:text-[12px] font-bold uppercase tracking-widest text-black/30 border-b border-gray-100 pb-2">Ko'nikmalar</h3>
@@ -1439,7 +2228,7 @@ const App = () => {
   }
 
   return (
-    <div className="flex h-screen bg-white text-gray-900 selection:bg-black selection:text-white font-sans overflow-hidden">
+    <div className="app-shell flex h-screen text-gray-900 selection:bg-emerald-700 selection:text-white overflow-hidden">
       {renderSidebar()}
 
       <main className="flex-grow flex flex-col overflow-hidden relative">
@@ -1596,6 +2385,24 @@ const App = () => {
       </Modal>
 
       <style>{`
+        .app-shell {
+          --brand-1: #0f766e;
+          --brand-2: #0e7490;
+          --surface-1: #f8fffc;
+          --surface-2: #eefaf7;
+          font-family: 'Space Grotesk', 'Manrope', system-ui, -apple-system, sans-serif;
+          background:
+            radial-gradient(circle at 8% 8%, rgba(16, 185, 129, 0.16), transparent 42%),
+            radial-gradient(circle at 88% 12%, rgba(14, 116, 144, 0.14), transparent 36%),
+            linear-gradient(180deg, var(--surface-1), var(--surface-2));
+        }
+
+        .app-shell aside,
+        .app-shell header,
+        .app-shell .bg-white {
+          backdrop-filter: saturate(1.1);
+        }
+
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }

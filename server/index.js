@@ -74,7 +74,11 @@ const mapStartup = (row) => {
     views: row.views || 0,
     github_url: row.github_url || '',
     website_url: row.website_url || '',
-    rejection_reason: row.rejection_reason || null
+    rejection_reason: row.rejection_reason || null,
+    segment: row.segment || 'IT Founder + Developer',
+    lifecycle_status: row.lifecycle_status || 'live',
+    success_fee_percent: row.success_fee_percent ?? 1.5,
+    registry_notes: row.registry_notes || ''
   };
 };
 
@@ -137,6 +141,324 @@ const buildUpdate = (body, jsonFields = []) => {
   return { fields, values };
 };
 
+const nowIso = () => new Date().toISOString();
+const makeId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const ensureWorkspace = async (startupId, createdBy = 'system') => {
+  const existing = await get('SELECT * FROM workspaces WHERE startup_id = ?', [startupId]);
+  if (existing) return existing;
+  const created_at = nowIso();
+  await run(
+    `INSERT INTO workspaces (id, startup_id, created_by, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [makeId('ws'), startupId, createdBy, 'active', created_at, created_at]
+  );
+  return get('SELECT * FROM workspaces WHERE startup_id = ?', [startupId]);
+};
+
+const safeDate = (value) => {
+  const d = value ? new Date(value) : null;
+  if (!d || Number.isNaN(d.getTime())) return null;
+  return d;
+};
+
+const daysDiff = (from, to = new Date()) => {
+  const a = safeDate(from);
+  if (!a) return 999;
+  const ms = to.getTime() - a.getTime();
+  return Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
+};
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const buildStartupReputationGraph = async (startupId) => {
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
+  if (!startupRow) return { members: [], edges: [] };
+
+  const startup = mapStartup(startupRow);
+  const members = startup.a_zolar || [];
+  const memberIds = members.map((m) => m.user_id);
+  if (memberIds.length === 0) return { members: [], edges: [] };
+
+  const reviews = await all(
+    `SELECT * FROM peer_reviews WHERE startup_id = ? ORDER BY created_at DESC`,
+    [startupId]
+  );
+
+  const taskRows = await all(
+    `SELECT assigned_to_id, COUNT(*) as total,
+            SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done_count
+     FROM tasks
+     WHERE startup_id = ?
+     GROUP BY assigned_to_id`,
+    [startupId]
+  );
+  const taskStats = Object.fromEntries(
+    taskRows.map((r) => [
+      r.assigned_to_id,
+      { total: r.total || 0, done: r.done_count || 0 }
+    ])
+  );
+
+  const activityRows = await all(
+    `SELECT user_id, SUM(hours_spent) as hours, MAX(created_at) as last_activity
+     FROM workspace_activity
+     WHERE startup_id = ?
+     GROUP BY user_id`,
+    [startupId]
+  );
+  const activityMap = Object.fromEntries(
+    activityRows.map((r) => [r.user_id, { hours: r.hours || 0, last_activity: r.last_activity }])
+  );
+
+  const memberMetrics = members.map((member) => {
+    const received = reviews.filter((r) => r.to_user_id === member.user_id);
+    const avgRating = received.length
+      ? received.reduce((acc, r) => acc + (r.rating || 0), 0) / received.length
+      : 0;
+    const avgDelivery = received.length
+      ? received.reduce((acc, r) => acc + (r.task_delivery || 0), 0) / received.length
+      : 0;
+    const avgCollab = received.length
+      ? received.reduce((acc, r) => acc + (r.collaboration || 0), 0) / received.length
+      : 0;
+    const avgReliability = received.length
+      ? received.reduce((acc, r) => acc + (r.reliability || 0), 0) / received.length
+      : 0;
+
+    const task = taskStats[member.user_id] || { total: 0, done: 0 };
+    const completionRate = task.total > 0 ? task.done / task.total : 0.5;
+    const activity = activityMap[member.user_id] || { hours: 0, last_activity: null };
+
+    const rawScore =
+      avgRating * 12 +
+      completionRate * 30 +
+      (avgDelivery / 5) * 12 +
+      (avgCollab / 5) * 10 +
+      (avgReliability / 5) * 12 +
+      Math.min(activity.hours, 40) / 40 * 14 +
+      (startup.lifecycle_status === 'live' ? 10 : startup.lifecycle_status === 'acquired' ? 14 : 4);
+
+    return {
+      user_id: member.user_id,
+      user_name: member.name,
+      role: member.role || 'Contributor',
+      joined_at: member.joined_at,
+      avg_rating: Number(avgRating.toFixed(2)),
+      reviews_count: received.length,
+      completion_rate: Number((completionRate * 100).toFixed(1)),
+      activity_hours: Number((activity.hours || 0).toFixed(1)),
+      last_activity: activity.last_activity || member.joined_at || startup.yaratilgan_vaqt,
+      score: Math.round(clamp(rawScore, 0, 100))
+    };
+  });
+
+  const edgeMap = {};
+  for (const review of reviews) {
+    const key = `${review.from_user_id}__${review.to_user_id}`;
+    if (!edgeMap[key]) {
+      edgeMap[key] = {
+        source: review.from_user_id,
+        target: review.to_user_id,
+        interactions: 0,
+        rating_total: 0
+      };
+    }
+    edgeMap[key].interactions += 1;
+    edgeMap[key].rating_total += review.rating || 0;
+  }
+  const edges = Object.values(edgeMap).map((e) => ({
+    source: e.source,
+    target: e.target,
+    interactions: e.interactions,
+    avg_rating: Number((e.rating_total / Math.max(1, e.interactions)).toFixed(2)),
+    strength: Math.round(clamp(((e.interactions * 0.6) + (e.rating_total / Math.max(1, e.interactions))), 1, 10))
+  }));
+
+  return {
+    members: memberMetrics.sort((a, b) => b.score - a.score),
+    edges
+  };
+};
+
+const buildUserReputationSummary = async (userId) => {
+  const user = await get('SELECT id, name FROM users WHERE id = ?', [userId]);
+  if (!user) return null;
+
+  const startupsRows = await all('SELECT * FROM startups');
+  const collaborationStartups = startupsRows
+    .map((row) => mapStartup(row))
+    .filter((s) => (s.a_zolar || []).some((m) => m.user_id === userId));
+
+  const peerReviews = await all('SELECT * FROM peer_reviews WHERE to_user_id = ?', [userId]);
+  const outboundReviews = await all('SELECT * FROM peer_reviews WHERE from_user_id = ?', [userId]);
+  const tasks = await all('SELECT * FROM tasks WHERE assigned_to_id = ?', [userId]);
+  const doneTasks = tasks.filter((t) => t.status === 'done').length;
+  const completionRate = tasks.length ? doneTasks / tasks.length : 0;
+
+  const avgRating = peerReviews.length
+    ? peerReviews.reduce((acc, r) => acc + (r.rating || 0), 0) / peerReviews.length
+    : 0;
+  const avgDelivery = peerReviews.length
+    ? peerReviews.reduce((acc, r) => acc + (r.task_delivery || 0), 0) / peerReviews.length
+    : 0;
+  const avgCollab = peerReviews.length
+    ? peerReviews.reduce((acc, r) => acc + (r.collaboration || 0), 0) / peerReviews.length
+    : 0;
+  const avgReliability = peerReviews.length
+    ? peerReviews.reduce((acc, r) => acc + (r.reliability || 0), 0) / peerReviews.length
+    : 0;
+
+  const activeProjects = collaborationStartups.filter((s) => s.lifecycle_status === 'live').length;
+  const successfulProjects = collaborationStartups.filter((s) => s.lifecycle_status === 'acquired').length;
+  const failedProjects = collaborationStartups.filter((s) => s.lifecycle_status === 'closed').length;
+
+  const collaborationMap = {};
+  for (const r of [...peerReviews, ...outboundReviews]) {
+    const peerId = r.from_user_id === userId ? r.to_user_id : r.from_user_id;
+    if (!peerId) continue;
+    if (!collaborationMap[peerId]) {
+      collaborationMap[peerId] = { peer_id: peerId, interactions: 0, score_total: 0 };
+    }
+    collaborationMap[peerId].interactions += 1;
+    collaborationMap[peerId].score_total += r.rating || 0;
+  }
+
+  const peerIds = Object.keys(collaborationMap);
+  const peers = peerIds.length
+    ? await all(
+      `SELECT id, name FROM users WHERE id IN (${peerIds.map(() => '?').join(',')})`,
+      peerIds
+    )
+    : [];
+  const peerNameMap = Object.fromEntries(peers.map((p) => [p.id, p.name]));
+
+  const graph = Object.values(collaborationMap).map((item) => ({
+    ...item,
+    peer_name: peerNameMap[item.peer_id] || item.peer_id,
+    avg_rating: Number((item.score_total / Math.max(1, item.interactions)).toFixed(2))
+  })).sort((a, b) => b.interactions - a.interactions);
+
+  const rawScore =
+    avgRating * 14 +
+    completionRate * 30 +
+    (avgDelivery / 5) * 10 +
+    (avgCollab / 5) * 8 +
+    (avgReliability / 5) * 10 +
+    Math.min(collaborationStartups.length, 8) / 8 * 12 +
+    Math.min(graph.length, 12) / 12 * 8 +
+    Math.min(activeProjects, 5) / 5 * 8 +
+    Math.min(successfulProjects, 3) / 3 * 8 -
+    Math.min(failedProjects, 4) * 3;
+
+  return {
+    user_id: user.id,
+    user_name: user.name,
+    score: Math.round(clamp(rawScore, 0, 100)),
+    stats: {
+      reviews_received: peerReviews.length,
+      avg_rating: Number(avgRating.toFixed(2)),
+      completion_rate: Number((completionRate * 100).toFixed(1)),
+      collaboration_count: collaborationStartups.length,
+      network_size: graph.length,
+      active_projects: activeProjects,
+      successful_projects: successfulProjects,
+      failed_projects: failedProjects,
+      avg_delivery: Number(avgDelivery.toFixed(2)),
+      avg_collaboration: Number(avgCollab.toFixed(2)),
+      avg_reliability: Number(avgReliability.toFixed(2))
+    },
+    graph
+  };
+};
+
+const buildStartupAiRisk = async (startupId) => {
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
+  if (!startupRow) return null;
+  const startup = mapStartup(startupRow);
+
+  const tasks = await all('SELECT * FROM tasks WHERE startup_id = ?', [startupId]);
+  const openDecisions = await all('SELECT * FROM workspace_decisions WHERE startup_id = ? AND status = "open"', [startupId]);
+  const openCases = await all('SELECT * FROM member_vote_cases WHERE startup_id = ? AND status = "open"', [startupId]);
+  const equity = await all('SELECT * FROM equity_allocations WHERE startup_id = ? AND status = "active"', [startupId]);
+  const recentActivity = await get(
+    `SELECT COUNT(*) as count
+     FROM workspace_activity
+     WHERE startup_id = ? AND created_at >= datetime('now', '-7 day')`,
+    [startupId]
+  );
+
+  const now = new Date();
+  const overdue = tasks.filter((t) => t.deadline && t.status !== 'done' && safeDate(t.deadline) && safeDate(t.deadline) < now).length;
+  const stalled = tasks.filter((t) => t.status !== 'done' && daysDiff(t.created_at, now) > 14).length;
+  const completed = tasks.filter((t) => t.status === 'done').length;
+  const completionRate = tasks.length ? completed / tasks.length : 0;
+  const oldOpenDecisions = openDecisions.filter((d) => daysDiff(d.created_at, now) > 7).length;
+
+  const totalEquity = equity.reduce((acc, e) => acc + (Number(e.share_percent) || 0), 0);
+  const maxShare = equity.reduce((acc, e) => Math.max(acc, Number(e.share_percent) || 0), 0);
+  const activityCount = recentActivity?.count || 0;
+
+  const signals = [];
+  let risk = 8;
+  if (overdue > 0) {
+    risk += Math.min(30, overdue * 6);
+    signals.push({ type: 'deadline', level: 'high', text: `${overdue} ta deadline o'tib ketgan vazifa bor.` });
+  }
+  if (stalled > 0) {
+    risk += Math.min(20, stalled * 4);
+    signals.push({ type: 'execution', level: 'medium', text: `${stalled} ta vazifa 14 kundan ko'p vaqt davomida yopilmagan.` });
+  }
+  if (completionRate < 0.45 && tasks.length >= 4) {
+    risk += 14;
+    signals.push({ type: 'delivery', level: 'high', text: `Task completion past: ${Math.round(completionRate * 100)}%.` });
+  }
+  if (oldOpenDecisions > 0) {
+    risk += Math.min(16, oldOpenDecisions * 5);
+    signals.push({ type: 'governance', level: 'medium', text: `Ochiq qarorlar kechikmoqda (${oldOpenDecisions} ta).` });
+  }
+  if (openCases.length > 0) {
+    risk += Math.min(18, openCases.length * 6);
+    signals.push({ type: 'team', level: 'high', text: `Founder vote ochiq holatda (${openCases.length} ta).` });
+  }
+  if (equity.length > 0 && (totalEquity < 99 || totalEquity > 101)) {
+    risk += 10;
+    signals.push({ type: 'equity', level: 'medium', text: `Equity balanslashmagan (${totalEquity.toFixed(2)}%).` });
+  }
+  if (maxShare > 70) {
+    risk += 9;
+    signals.push({ type: 'equity', level: 'medium', text: `Bitta odam ulushi juda yuqori (${maxShare.toFixed(1)}%).` });
+  }
+  if (activityCount === 0) {
+    risk += 12;
+    signals.push({ type: 'activity', level: 'high', text: "So'nggi 7 kunda workspace activity yo'q." });
+  }
+  if (startup.lifecycle_status === 'closed') risk = 100;
+
+  const score = Math.round(clamp(risk, 0, 100));
+  const level =
+    score >= 75 ? 'critical'
+      : score >= 55 ? 'high'
+        : score >= 30 ? 'medium'
+          : 'low';
+
+  return {
+    score,
+    level,
+    signals,
+    metrics: {
+      overdue_tasks: overdue,
+      stalled_tasks: stalled,
+      completion_rate: Number((completionRate * 100).toFixed(1)),
+      open_decisions: openDecisions.length,
+      open_member_votes: openCases.length,
+      equity_total: Number(totalEquity.toFixed(2)),
+      max_single_equity: Number(maxShare.toFixed(2)),
+      activity_7d: activityCount
+    }
+  };
+};
+
 app.get('/api/health', async (req, res) => {
   res.json({ ok: true });
 });
@@ -163,6 +485,12 @@ app.get('/api/users', async (req, res) => {
 });
 
 app.get('/api/users/:id', async (req, res) => {
+  if (req.params.id === 'by-email') {
+    const email = req.query.email;
+    if (!email) return res.status(400).send('Email required');
+    const row = await get('SELECT * FROM users WHERE email = ?', [email]);
+    return res.json(mapUser(row));
+  }
   const row = await get('SELECT * FROM users WHERE id = ?', [req.params.id]);
   if (!row) return res.status(404).send('User not found');
   res.json(mapUser(row));
@@ -252,8 +580,12 @@ app.get('/api/startups', async (req, res) => {
 app.post('/api/startups', async (req, res) => {
   const s = req.body;
   await run(
-    `INSERT INTO startups (id, nomi, tavsif, category, kerakli_mutaxassislar, logo, egasi_id, egasi_name, status, yaratilgan_vaqt, a_zolar, tasks, views, github_url, website_url)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO startups (
+      id, nomi, tavsif, category, kerakli_mutaxassislar, logo, egasi_id, egasi_name,
+      status, yaratilgan_vaqt, a_zolar, tasks, views, github_url, website_url,
+      segment, lifecycle_status, success_fee_percent, registry_notes
+    )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       s.id,
       s.nomi,
@@ -269,7 +601,25 @@ app.post('/api/startups', async (req, res) => {
       JSON.stringify(s.tasks || []),
       s.views || 0,
       s.github_url || '',
-      s.website_url || ''
+      s.website_url || '',
+      s.segment || 'IT Founder + Developer',
+      s.lifecycle_status || 'live',
+      Number.isFinite(Number(s.success_fee_percent)) ? Number(s.success_fee_percent) : 1.5,
+      s.registry_notes || ''
+    ]
+  );
+  await ensureWorkspace(s.id, s.egasi_id || 'system');
+  await run(
+    `INSERT INTO workspace_activity (id, startup_id, user_id, activity_type, payload, hours_spent, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      makeId('act'),
+      s.id,
+      s.egasi_id || 'system',
+      'workspace_created',
+      JSON.stringify({ startup_name: s.nomi }),
+      0,
+      nowIso()
     ]
   );
   const created = await get('SELECT * FROM startups WHERE id = ?', [s.id]);
@@ -306,6 +656,16 @@ app.delete('/api/startups/:id', async (req, res) => {
   await run('DELETE FROM startups WHERE id = ?', [id]);
   await run('DELETE FROM tasks WHERE startup_id = ?', [id]);
   await run('DELETE FROM join_requests WHERE startup_id = ?', [id]);
+  await run('DELETE FROM workspaces WHERE startup_id = ?', [id]);
+  await run('DELETE FROM workspace_activity WHERE startup_id = ?', [id]);
+  await run('DELETE FROM peer_reviews WHERE startup_id = ?', [id]);
+  await run('DELETE FROM workspace_decisions WHERE startup_id = ?', [id]);
+  await run('DELETE FROM decision_votes WHERE startup_id = ?', [id]);
+  await run('DELETE FROM member_vote_cases WHERE startup_id = ?', [id]);
+  await run('DELETE FROM member_vote_ballots WHERE startup_id = ?', [id]);
+  await run('DELETE FROM equity_allocations WHERE startup_id = ?', [id]);
+  await run('DELETE FROM safekeeping_agreements WHERE startup_id = ?', [id]);
+  await run('DELETE FROM investor_intros WHERE startup_id = ?', [id]);
   await logAction(req.query?.actor_id, 'delete_startup', 'startup', id);
   res.status(204).end();
 });
@@ -468,6 +828,701 @@ app.get('/api/audit-logs', async (req, res) => {
     meta: parseJson(r.meta, {}),
     created_at: r.created_at
   })));
+});
+
+// Startup workspace snapshot
+app.get('/api/startups/:id/workspace', async (req, res) => {
+  const startupId = req.params.id;
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
+  if (!startupRow) return res.status(404).send('Startup not found');
+  const startup = mapStartup(startupRow);
+  const members = startup.a_zolar || [];
+  const memberNameMap = Object.fromEntries(members.map((m) => [m.user_id, m.name]));
+
+  const workspace = await ensureWorkspace(startupId, startup.egasi_id || 'system');
+  const reviews = await all('SELECT * FROM peer_reviews WHERE startup_id = ? ORDER BY created_at DESC', [startupId]);
+  const decisions = await all('SELECT * FROM workspace_decisions WHERE startup_id = ? ORDER BY created_at DESC', [startupId]);
+  const decisionVotes = await all('SELECT * FROM decision_votes WHERE startup_id = ?', [startupId]);
+  const voteCases = await all('SELECT * FROM member_vote_cases WHERE startup_id = ? ORDER BY created_at DESC', [startupId]);
+  const caseBallots = await all('SELECT * FROM member_vote_ballots WHERE startup_id = ?', [startupId]);
+  const equityRows = await all(
+    `SELECT e.*, u.name as user_name
+     FROM equity_allocations e
+     LEFT JOIN users u ON u.id = e.user_id
+     WHERE e.startup_id = ?
+     ORDER BY e.created_at DESC`,
+    [startupId]
+  );
+  const agreements = await all(
+    `SELECT * FROM safekeeping_agreements
+     WHERE startup_id = ?
+     ORDER BY updated_at DESC, created_at DESC`,
+    [startupId]
+  );
+  const investorIntros = await all(
+    `SELECT * FROM investor_intros
+     WHERE startup_id = ?
+     ORDER BY created_at DESC`,
+    [startupId]
+  );
+
+  const reputation = await buildStartupReputationGraph(startupId);
+  const aiRisk = await buildStartupAiRisk(startupId);
+
+  const decisionVoteSummary = decisions.map((d) => {
+    const votes = decisionVotes.filter((v) => v.decision_id === d.id);
+    return {
+      id: d.id,
+      title: d.title,
+      description: d.description,
+      proposer_id: d.proposer_id,
+      proposer_name: memberNameMap[d.proposer_id] || d.proposer_id,
+      status: d.status,
+      created_at: d.created_at,
+      resolved_at: d.resolved_at || null,
+      votes: {
+        approve: votes.filter((v) => v.vote === 'approve').length,
+        reject: votes.filter((v) => v.vote === 'reject').length
+      }
+    };
+  });
+
+  const memberVoteSummary = voteCases.map((c) => {
+    const votes = caseBallots.filter((v) => v.case_id === c.id);
+    return {
+      id: c.id,
+      target_user_id: c.target_user_id,
+      target_user_name: memberNameMap[c.target_user_id] || c.target_user_id,
+      reason: c.reason,
+      proposer_id: c.proposer_id,
+      proposer_name: memberNameMap[c.proposer_id] || c.proposer_id,
+      status: c.status,
+      resolution: c.resolution || null,
+      created_at: c.created_at,
+      resolved_at: c.resolved_at || null,
+      votes: {
+        keep: votes.filter((v) => v.vote === 'keep').length,
+        remove: votes.filter((v) => v.vote === 'remove').length
+      }
+    };
+  });
+
+  res.json({
+    workspace,
+    startup: {
+      id: startup.id,
+      lifecycle_status: startup.lifecycle_status,
+      success_fee_percent: startup.success_fee_percent,
+      registry_notes: startup.registry_notes
+    },
+    reviews: reviews.map((r) => ({
+      id: r.id,
+      startup_id: r.startup_id,
+      from_user_id: r.from_user_id,
+      from_user_name: memberNameMap[r.from_user_id] || r.from_user_id,
+      to_user_id: r.to_user_id,
+      to_user_name: memberNameMap[r.to_user_id] || r.to_user_id,
+      rating: r.rating,
+      task_delivery: r.task_delivery,
+      collaboration: r.collaboration,
+      reliability: r.reliability,
+      comment: r.comment || '',
+      created_at: r.created_at
+    })),
+    reputation,
+    decisions: decisionVoteSummary,
+    member_votes: memberVoteSummary,
+    equity: equityRows.map((e) => ({
+      id: e.id,
+      startup_id: e.startup_id,
+      user_id: e.user_id,
+      user_name: e.user_name || memberNameMap[e.user_id] || e.user_id,
+      share_percent: Number(e.share_percent || 0),
+      vesting_months: Number(e.vesting_months || 0),
+      cliff_months: Number(e.cliff_months || 0),
+      status: e.status,
+      notes: e.notes || '',
+      created_at: e.created_at,
+      updated_at: e.updated_at
+    })),
+    agreements: agreements.map((a) => ({
+      id: a.id,
+      startup_id: a.startup_id,
+      title: a.title,
+      body: a.body,
+      status: a.status,
+      signed_by: parseJson(a.signed_by, []),
+      created_at: a.created_at,
+      updated_at: a.updated_at
+    })),
+    investor_intros: investorIntros.map((i) => ({
+      id: i.id,
+      startup_id: i.startup_id,
+      investor_name: i.investor_name,
+      introduced_by: i.introduced_by,
+      introduced_by_name: memberNameMap[i.introduced_by] || i.introduced_by,
+      stage: i.stage,
+      amount: Number(i.amount || 0),
+      status: i.status,
+      notes: i.notes || '',
+      created_at: i.created_at
+    })),
+    ai_risk: aiRisk
+  });
+});
+
+app.post('/api/startups/:id/activity', async (req, res) => {
+  const startupId = req.params.id;
+  const userId = req.body?.user_id;
+  const activityType = (req.body?.activity_type || '').trim();
+  if (!userId || !activityType) return res.status(400).send('user_id and activity_type required');
+  await ensureWorkspace(startupId, userId);
+  const id = makeId('act');
+  const created_at = nowIso();
+  await run(
+    `INSERT INTO workspace_activity (id, startup_id, user_id, activity_type, payload, hours_spent, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      startupId,
+      userId,
+      activityType,
+      JSON.stringify(req.body?.payload || {}),
+      Number(req.body?.hours_spent || 0),
+      created_at
+    ]
+  );
+  const created = await get('SELECT * FROM workspace_activity WHERE id = ?', [id]);
+  res.status(201).json({
+    ...created,
+    payload: parseJson(created?.payload, {})
+  });
+});
+
+// Reputation graph and peer reviews
+app.get('/api/startups/:id/reputation', async (req, res) => {
+  const graph = await buildStartupReputationGraph(req.params.id);
+  res.json(graph);
+});
+
+app.get('/api/users/:id/reputation', async (req, res) => {
+  const summary = await buildUserReputationSummary(req.params.id);
+  if (!summary) return res.status(404).send('User not found');
+  res.json(summary);
+});
+
+app.post('/api/startups/:id/reputation/reviews', async (req, res) => {
+  const startupId = req.params.id;
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
+  if (!startupRow) return res.status(404).send('Startup not found');
+  const startup = mapStartup(startupRow);
+  const members = startup.a_zolar || [];
+  const memberIds = new Set(members.map((m) => m.user_id));
+
+  const fromUserId = req.body?.from_user_id;
+  const toUserId = req.body?.to_user_id;
+  if (!fromUserId || !toUserId) return res.status(400).send('from_user_id and to_user_id required');
+  if (fromUserId === toUserId) return res.status(400).send('Self-review is not allowed');
+  if (!memberIds.has(fromUserId) || !memberIds.has(toUserId)) {
+    return res.status(400).send('Only workspace members can review each other');
+  }
+
+  const rating = clamp(Number(req.body?.rating || 0), 1, 5);
+  const taskDelivery = clamp(Number(req.body?.task_delivery || rating), 1, 5);
+  const collaboration = clamp(Number(req.body?.collaboration || rating), 1, 5);
+  const reliability = clamp(Number(req.body?.reliability || rating), 1, 5);
+  const created_at = nowIso();
+  const id = makeId('pr');
+
+  await run(
+    `INSERT INTO peer_reviews (
+      id, startup_id, from_user_id, to_user_id, rating, task_delivery, collaboration, reliability, comment, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      startupId,
+      fromUserId,
+      toUserId,
+      rating,
+      taskDelivery,
+      collaboration,
+      reliability,
+      (req.body?.comment || '').trim(),
+      created_at
+    ]
+  );
+
+  await run(
+    `INSERT INTO workspace_activity (id, startup_id, user_id, activity_type, payload, hours_spent, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      makeId('act'),
+      startupId,
+      fromUserId,
+      'peer_review_submitted',
+      JSON.stringify({ to_user_id: toUserId, rating }),
+      0,
+      created_at
+    ]
+  );
+
+  const created = await get('SELECT * FROM peer_reviews WHERE id = ?', [id]);
+  res.status(201).json(created);
+});
+
+// Governance decisions
+app.get('/api/startups/:id/decisions', async (req, res) => {
+  const startupId = req.params.id;
+  const decisions = await all(
+    'SELECT * FROM workspace_decisions WHERE startup_id = ? ORDER BY created_at DESC',
+    [startupId]
+  );
+  const votes = await all('SELECT * FROM decision_votes WHERE startup_id = ?', [startupId]);
+  res.json(decisions.map((d) => {
+    const relatedVotes = votes.filter((v) => v.decision_id === d.id);
+    return {
+      ...d,
+      votes: {
+        approve: relatedVotes.filter((v) => v.vote === 'approve').length,
+        reject: relatedVotes.filter((v) => v.vote === 'reject').length
+      }
+    };
+  }));
+});
+
+app.post('/api/startups/:id/decisions', async (req, res) => {
+  const startupId = req.params.id;
+  const title = (req.body?.title || '').trim();
+  const description = (req.body?.description || '').trim();
+  const proposerId = req.body?.proposer_id;
+  if (!title || !proposerId) return res.status(400).send('title and proposer_id required');
+
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
+  if (!startupRow) return res.status(404).send('Startup not found');
+  const startup = mapStartup(startupRow);
+  const memberIds = new Set((startup.a_zolar || []).map((m) => m.user_id));
+  if (!memberIds.has(proposerId)) return res.status(403).send('Only members can create decisions');
+
+  const id = makeId('dec');
+  const created_at = nowIso();
+  await run(
+    `INSERT INTO workspace_decisions (id, startup_id, title, description, proposer_id, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, startupId, title, description, proposerId, 'open', created_at]
+  );
+
+  await run(
+    `INSERT INTO workspace_activity (id, startup_id, user_id, activity_type, payload, hours_spent, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      makeId('act'),
+      startupId,
+      proposerId,
+      'decision_created',
+      JSON.stringify({ decision_id: id }),
+      0,
+      created_at
+    ]
+  );
+
+  const created = await get('SELECT * FROM workspace_decisions WHERE id = ?', [id]);
+  res.status(201).json(created);
+});
+
+app.post('/api/decisions/:id/vote', async (req, res) => {
+  const decisionId = req.params.id;
+  const voterId = req.body?.voter_id;
+  const vote = req.body?.vote;
+  if (!voterId || !['approve', 'reject'].includes(vote)) {
+    return res.status(400).send('voter_id and valid vote required');
+  }
+
+  const decision = await get('SELECT * FROM workspace_decisions WHERE id = ?', [decisionId]);
+  if (!decision) return res.status(404).send('Decision not found');
+  if (decision.status !== 'open') return res.status(400).send('Decision already resolved');
+
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [decision.startup_id]);
+  if (!startupRow) return res.status(404).send('Startup not found');
+  const startup = mapStartup(startupRow);
+  const memberIds = new Set((startup.a_zolar || []).map((m) => m.user_id));
+  if (!memberIds.has(voterId)) return res.status(403).send('Only members can vote');
+
+  const existing = await get('SELECT * FROM decision_votes WHERE decision_id = ? AND voter_id = ?', [decisionId, voterId]);
+  if (existing) {
+    await run('UPDATE decision_votes SET vote = ?, created_at = ? WHERE id = ?', [vote, nowIso(), existing.id]);
+  } else {
+    await run(
+      `INSERT INTO decision_votes (id, decision_id, startup_id, voter_id, vote, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [makeId('dv'), decisionId, decision.startup_id, voterId, vote, nowIso()]
+    );
+  }
+
+  const rows = await all('SELECT vote, COUNT(*) as count FROM decision_votes WHERE decision_id = ? GROUP BY vote', [decisionId]);
+  const approve = rows.find((r) => r.vote === 'approve')?.count || 0;
+  const reject = rows.find((r) => r.vote === 'reject')?.count || 0;
+  const majority = Math.floor(memberIds.size / 2) + 1;
+
+  let status = decision.status;
+  if (approve >= majority) status = 'approved';
+  if (reject >= majority) status = 'rejected';
+  if (status !== decision.status) {
+    await run(
+      'UPDATE workspace_decisions SET status = ?, resolved_at = ? WHERE id = ?',
+      [status, nowIso(), decisionId]
+    );
+  }
+
+  const updated = await get('SELECT * FROM workspace_decisions WHERE id = ?', [decisionId]);
+  res.json({
+    ...updated,
+    votes: { approve, reject },
+    majority_required: majority
+  });
+});
+
+// Founder member vote (who stays/leaves)
+app.get('/api/startups/:id/member-votes', async (req, res) => {
+  const startupId = req.params.id;
+  const cases = await all('SELECT * FROM member_vote_cases WHERE startup_id = ? ORDER BY created_at DESC', [startupId]);
+  const ballots = await all('SELECT * FROM member_vote_ballots WHERE startup_id = ?', [startupId]);
+  res.json(cases.map((c) => {
+    const related = ballots.filter((b) => b.case_id === c.id);
+    return {
+      ...c,
+      votes: {
+        keep: related.filter((b) => b.vote === 'keep').length,
+        remove: related.filter((b) => b.vote === 'remove').length
+      }
+    };
+  }));
+});
+
+app.post('/api/startups/:id/member-votes', async (req, res) => {
+  const startupId = req.params.id;
+  const targetUserId = req.body?.target_user_id;
+  const reason = (req.body?.reason || '').trim();
+  const proposerId = req.body?.proposer_id;
+  if (!targetUserId || !reason || !proposerId) {
+    return res.status(400).send('target_user_id, reason, proposer_id required');
+  }
+
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
+  if (!startupRow) return res.status(404).send('Startup not found');
+  const startup = mapStartup(startupRow);
+  const members = startup.a_zolar || [];
+  const memberIds = new Set(members.map((m) => m.user_id));
+  if (!memberIds.has(proposerId) || !memberIds.has(targetUserId)) {
+    return res.status(400).send('Both proposer and target must be startup members');
+  }
+
+  const id = makeId('mvc');
+  const created_at = nowIso();
+  await run(
+    `INSERT INTO member_vote_cases (id, startup_id, target_user_id, reason, proposer_id, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, startupId, targetUserId, reason, proposerId, 'open', created_at]
+  );
+
+  await run(
+    `INSERT INTO workspace_activity (id, startup_id, user_id, activity_type, payload, hours_spent, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      makeId('act'),
+      startupId,
+      proposerId,
+      'member_vote_opened',
+      JSON.stringify({ vote_case_id: id, target_user_id: targetUserId }),
+      0,
+      created_at
+    ]
+  );
+
+  const created = await get('SELECT * FROM member_vote_cases WHERE id = ?', [id]);
+  res.status(201).json(created);
+});
+
+app.post('/api/member-votes/:id/cast', async (req, res) => {
+  const caseId = req.params.id;
+  const voterId = req.body?.voter_id;
+  const vote = req.body?.vote;
+  if (!voterId || !['keep', 'remove'].includes(vote)) {
+    return res.status(400).send('voter_id and valid vote required');
+  }
+
+  const voteCase = await get('SELECT * FROM member_vote_cases WHERE id = ?', [caseId]);
+  if (!voteCase) return res.status(404).send('Vote case not found');
+  if (voteCase.status !== 'open') return res.status(400).send('Vote case already resolved');
+
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [voteCase.startup_id]);
+  if (!startupRow) return res.status(404).send('Startup not found');
+  const startup = mapStartup(startupRow);
+  const members = startup.a_zolar || [];
+  const eligibleVoters = members.filter((m) => m.user_id !== voteCase.target_user_id);
+  const eligibleIds = new Set(eligibleVoters.map((m) => m.user_id));
+  if (!eligibleIds.has(voterId)) return res.status(403).send('Only eligible members can vote');
+
+  const existing = await get('SELECT * FROM member_vote_ballots WHERE case_id = ? AND voter_id = ?', [caseId, voterId]);
+  if (existing) {
+    await run('UPDATE member_vote_ballots SET vote = ?, created_at = ? WHERE id = ?', [vote, nowIso(), existing.id]);
+  } else {
+    await run(
+      `INSERT INTO member_vote_ballots (id, case_id, startup_id, voter_id, vote, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [makeId('mvb'), caseId, voteCase.startup_id, voterId, vote, nowIso()]
+    );
+  }
+
+  const rows = await all(
+    'SELECT vote, COUNT(*) as count FROM member_vote_ballots WHERE case_id = ? GROUP BY vote',
+    [caseId]
+  );
+  const keepCount = rows.find((r) => r.vote === 'keep')?.count || 0;
+  const removeCount = rows.find((r) => r.vote === 'remove')?.count || 0;
+  const majority = Math.floor(eligibleVoters.length / 2) + 1;
+
+  let status = voteCase.status;
+  let resolution = voteCase.resolution;
+  if (removeCount >= majority) {
+    status = 'resolved';
+    resolution = 'removed';
+    const nextMembers = members.filter((m) => m.user_id !== voteCase.target_user_id);
+    await run('UPDATE startups SET a_zolar = ? WHERE id = ?', [JSON.stringify(nextMembers), voteCase.startup_id]);
+  } else if (keepCount >= majority) {
+    status = 'resolved';
+    resolution = 'kept';
+  }
+
+  if (status !== voteCase.status) {
+    await run(
+      'UPDATE member_vote_cases SET status = ?, resolution = ?, resolved_at = ? WHERE id = ?',
+      [status, resolution, nowIso(), caseId]
+    );
+  }
+
+  const updated = await get('SELECT * FROM member_vote_cases WHERE id = ?', [caseId]);
+  res.json({
+    ...updated,
+    votes: { keep: keepCount, remove: removeCount },
+    majority_required: majority
+  });
+});
+
+// Equity ledger
+app.get('/api/startups/:id/equity', async (req, res) => {
+  const startupId = req.params.id;
+  const rows = await all(
+    `SELECT e.*, u.name as user_name
+     FROM equity_allocations e
+     LEFT JOIN users u ON u.id = e.user_id
+     WHERE e.startup_id = ?
+     ORDER BY e.created_at DESC`,
+    [startupId]
+  );
+  res.json(rows.map((e) => ({
+    ...e,
+    share_percent: Number(e.share_percent || 0),
+    vesting_months: Number(e.vesting_months || 0),
+    cliff_months: Number(e.cliff_months || 0)
+  })));
+});
+
+app.post('/api/startups/:id/equity', async (req, res) => {
+  const startupId = req.params.id;
+  const userId = req.body?.user_id;
+  const share = Number(req.body?.share_percent);
+  if (!userId || !Number.isFinite(share)) return res.status(400).send('user_id and share_percent required');
+
+  const existing = await get(
+    `SELECT * FROM equity_allocations WHERE startup_id = ? AND user_id = ? AND status != 'archived'`,
+    [startupId, userId]
+  );
+  const timestamp = nowIso();
+  if (existing) {
+    await run(
+      `UPDATE equity_allocations
+       SET share_percent = ?, vesting_months = ?, cliff_months = ?, notes = ?, status = ?, updated_at = ?
+       WHERE id = ?`,
+      [
+        share,
+        Number(req.body?.vesting_months || existing.vesting_months || 48),
+        Number(req.body?.cliff_months || existing.cliff_months || 12),
+        (req.body?.notes || existing.notes || '').trim(),
+        req.body?.status || existing.status || 'active',
+        timestamp,
+        existing.id
+      ]
+    );
+    const updated = await get('SELECT * FROM equity_allocations WHERE id = ?', [existing.id]);
+    return res.json(updated);
+  }
+
+  const id = makeId('eq');
+  await run(
+    `INSERT INTO equity_allocations (
+      id, startup_id, user_id, share_percent, vesting_months, cliff_months, status, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      startupId,
+      userId,
+      share,
+      Number(req.body?.vesting_months || 48),
+      Number(req.body?.cliff_months || 12),
+      req.body?.status || 'active',
+      (req.body?.notes || '').trim(),
+      timestamp,
+      timestamp
+    ]
+  );
+  const created = await get('SELECT * FROM equity_allocations WHERE id = ?', [id]);
+  res.status(201).json(created);
+});
+
+app.put('/api/equity/:id', async (req, res) => {
+  const id = req.params.id;
+  const { fields, values } = buildUpdate(req.body);
+  if (fields.length === 0) return res.status(400).send('No fields to update');
+  fields.push('updated_at = ?');
+  values.push(nowIso());
+  values.push(id);
+  await run(`UPDATE equity_allocations SET ${fields.join(', ')} WHERE id = ?`, values);
+  const updated = await get('SELECT * FROM equity_allocations WHERE id = ?', [id]);
+  if (!updated) return res.status(404).send('Equity record not found');
+  res.json(updated);
+});
+
+app.delete('/api/equity/:id', async (req, res) => {
+  const id = req.params.id;
+  await run('UPDATE equity_allocations SET status = ?, updated_at = ? WHERE id = ?', ['archived', nowIso(), id]);
+  res.status(204).end();
+});
+
+// Registry + Agreements + Investor flow
+app.get('/api/startups/:id/agreements', async (req, res) => {
+  const rows = await all(
+    `SELECT * FROM safekeeping_agreements WHERE startup_id = ?
+     ORDER BY updated_at DESC, created_at DESC`,
+    [req.params.id]
+  );
+  res.json(rows.map((a) => ({ ...a, signed_by: parseJson(a.signed_by, []) })));
+});
+
+app.post('/api/startups/:id/agreements', async (req, res) => {
+  const startupId = req.params.id;
+  const title = (req.body?.title || '').trim();
+  const body = (req.body?.body || '').trim();
+  if (!title || !body) return res.status(400).send('title and body required');
+  const id = makeId('agr');
+  const timestamp = nowIso();
+  await run(
+    `INSERT INTO safekeeping_agreements (id, startup_id, title, body, status, signed_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      startupId,
+      title,
+      body,
+      req.body?.status || 'draft',
+      JSON.stringify(req.body?.signed_by || []),
+      timestamp,
+      timestamp
+    ]
+  );
+  const created = await get('SELECT * FROM safekeeping_agreements WHERE id = ?', [id]);
+  res.status(201).json({ ...created, signed_by: parseJson(created?.signed_by, []) });
+});
+
+app.put('/api/agreements/:id', async (req, res) => {
+  const id = req.params.id;
+  const payload = { ...req.body };
+  if (payload.signed_by !== undefined) payload.signed_by = JSON.stringify(payload.signed_by || []);
+  const { fields, values } = buildUpdate(payload);
+  if (fields.length === 0) return res.status(400).send('No fields to update');
+  fields.push('updated_at = ?');
+  values.push(nowIso());
+  values.push(id);
+  await run(`UPDATE safekeeping_agreements SET ${fields.join(', ')} WHERE id = ?`, values);
+  const updated = await get('SELECT * FROM safekeeping_agreements WHERE id = ?', [id]);
+  if (!updated) return res.status(404).send('Agreement not found');
+  res.json({ ...updated, signed_by: parseJson(updated.signed_by, []) });
+});
+
+app.get('/api/startups/:id/investor-intros', async (req, res) => {
+  const rows = await all(
+    `SELECT * FROM investor_intros WHERE startup_id = ? ORDER BY created_at DESC`,
+    [req.params.id]
+  );
+  res.json(rows.map((i) => ({ ...i, amount: Number(i.amount || 0) })));
+});
+
+app.post('/api/startups/:id/investor-intros', async (req, res) => {
+  const startupId = req.params.id;
+  const investorName = (req.body?.investor_name || '').trim();
+  const introducedBy = req.body?.introduced_by;
+  if (!investorName || !introducedBy) return res.status(400).send('investor_name and introduced_by required');
+  const id = makeId('inv');
+  await run(
+    `INSERT INTO investor_intros (
+      id, startup_id, investor_name, introduced_by, stage, amount, status, notes, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      startupId,
+      investorName,
+      introducedBy,
+      req.body?.stage || 'seed',
+      Number(req.body?.amount || 0),
+      req.body?.status || 'planned',
+      (req.body?.notes || '').trim(),
+      nowIso()
+    ]
+  );
+  const created = await get('SELECT * FROM investor_intros WHERE id = ?', [id]);
+  res.status(201).json({ ...created, amount: Number(created?.amount || 0) });
+});
+
+app.put('/api/investor-intros/:id', async (req, res) => {
+  const id = req.params.id;
+  const { fields, values } = buildUpdate(req.body);
+  if (fields.length === 0) return res.status(400).send('No fields to update');
+  values.push(id);
+  await run(`UPDATE investor_intros SET ${fields.join(', ')} WHERE id = ?`, values);
+  const updated = await get('SELECT * FROM investor_intros WHERE id = ?', [id]);
+  if (!updated) return res.status(404).send('Investor intro not found');
+  res.json({ ...updated, amount: Number(updated.amount || 0) });
+});
+
+app.put('/api/startups/:id/registry', async (req, res) => {
+  const startupId = req.params.id;
+  const lifecycleStatus = req.body?.lifecycle_status || 'live';
+  const successFee = Number(req.body?.success_fee_percent);
+  const notes = req.body?.registry_notes || '';
+  await run(
+    `UPDATE startups
+     SET lifecycle_status = ?, success_fee_percent = ?, registry_notes = ?
+     WHERE id = ?`,
+    [
+      lifecycleStatus,
+      Number.isFinite(successFee) ? successFee : 1.5,
+      notes,
+      startupId
+    ]
+  );
+  const updated = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
+  await logAction(req.body?.actor_id, 'update_registry', 'startup', startupId, {
+    lifecycle_status: lifecycleStatus,
+    success_fee_percent: Number.isFinite(successFee) ? successFee : 1.5
+  });
+  res.json(mapStartup(updated));
+});
+
+// AI Decision Engine
+app.get('/api/startups/:id/ai-risk', async (req, res) => {
+  const report = await buildStartupAiRisk(req.params.id);
+  if (!report) return res.status(404).send('Startup not found');
+  res.json(report);
 });
 
 const distPath = path.join(process.cwd(), 'dist');

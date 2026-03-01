@@ -147,7 +147,163 @@ const init = async () => {
     )
   `);
 
+  await run(`
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY,
+      startup_id TEXT UNIQUE NOT NULL,
+      created_by TEXT,
+      status TEXT DEFAULT 'active',
+      created_at TEXT,
+      updated_at TEXT,
+      FOREIGN KEY (startup_id) REFERENCES startups(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS workspace_activity (
+      id TEXT PRIMARY KEY,
+      startup_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      activity_type TEXT NOT NULL,
+      payload TEXT,
+      hours_spent REAL DEFAULT 0,
+      created_at TEXT,
+      FOREIGN KEY (startup_id) REFERENCES startups(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS peer_reviews (
+      id TEXT PRIMARY KEY,
+      startup_id TEXT NOT NULL,
+      from_user_id TEXT NOT NULL,
+      to_user_id TEXT NOT NULL,
+      rating INTEGER NOT NULL,
+      task_delivery INTEGER DEFAULT 0,
+      collaboration INTEGER DEFAULT 0,
+      reliability INTEGER DEFAULT 0,
+      comment TEXT,
+      created_at TEXT,
+      FOREIGN KEY (startup_id) REFERENCES startups(id),
+      FOREIGN KEY (from_user_id) REFERENCES users(id),
+      FOREIGN KEY (to_user_id) REFERENCES users(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS workspace_decisions (
+      id TEXT PRIMARY KEY,
+      startup_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      proposer_id TEXT NOT NULL,
+      status TEXT DEFAULT 'open',
+      created_at TEXT,
+      resolved_at TEXT,
+      FOREIGN KEY (startup_id) REFERENCES startups(id),
+      FOREIGN KEY (proposer_id) REFERENCES users(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS decision_votes (
+      id TEXT PRIMARY KEY,
+      decision_id TEXT NOT NULL,
+      startup_id TEXT NOT NULL,
+      voter_id TEXT NOT NULL,
+      vote TEXT NOT NULL,
+      created_at TEXT,
+      UNIQUE(decision_id, voter_id),
+      FOREIGN KEY (decision_id) REFERENCES workspace_decisions(id),
+      FOREIGN KEY (startup_id) REFERENCES startups(id),
+      FOREIGN KEY (voter_id) REFERENCES users(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS member_vote_cases (
+      id TEXT PRIMARY KEY,
+      startup_id TEXT NOT NULL,
+      target_user_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      proposer_id TEXT NOT NULL,
+      status TEXT DEFAULT 'open',
+      resolution TEXT,
+      created_at TEXT,
+      resolved_at TEXT,
+      FOREIGN KEY (startup_id) REFERENCES startups(id),
+      FOREIGN KEY (target_user_id) REFERENCES users(id),
+      FOREIGN KEY (proposer_id) REFERENCES users(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS member_vote_ballots (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      startup_id TEXT NOT NULL,
+      voter_id TEXT NOT NULL,
+      vote TEXT NOT NULL,
+      created_at TEXT,
+      UNIQUE(case_id, voter_id),
+      FOREIGN KEY (case_id) REFERENCES member_vote_cases(id),
+      FOREIGN KEY (startup_id) REFERENCES startups(id),
+      FOREIGN KEY (voter_id) REFERENCES users(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS equity_allocations (
+      id TEXT PRIMARY KEY,
+      startup_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      share_percent REAL NOT NULL,
+      vesting_months INTEGER DEFAULT 48,
+      cliff_months INTEGER DEFAULT 12,
+      status TEXT DEFAULT 'active',
+      notes TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      FOREIGN KEY (startup_id) REFERENCES startups(id),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS safekeeping_agreements (
+      id TEXT PRIMARY KEY,
+      startup_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT DEFAULT 'draft',
+      signed_by TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      FOREIGN KEY (startup_id) REFERENCES startups(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS investor_intros (
+      id TEXT PRIMARY KEY,
+      startup_id TEXT NOT NULL,
+      investor_name TEXT NOT NULL,
+      introduced_by TEXT NOT NULL,
+      stage TEXT DEFAULT 'seed',
+      amount REAL DEFAULT 0,
+      status TEXT DEFAULT 'planned',
+      notes TEXT,
+      created_at TEXT,
+      FOREIGN KEY (startup_id) REFERENCES startups(id)
+    )
+  `);
+
   await ensureColumn('users', 'banned', 'INTEGER DEFAULT 0');
+  await ensureColumn('startups', 'segment', `TEXT DEFAULT 'IT Founder + Developer'`);
+  await ensureColumn('startups', 'lifecycle_status', `TEXT DEFAULT 'live'`);
+  await ensureColumn('startups', 'success_fee_percent', 'REAL DEFAULT 1.5');
+  await ensureColumn('startups', 'registry_notes', 'TEXT');
 
   const existingCategories = await all('SELECT * FROM categories');
   if (existingCategories.length === 0) {
