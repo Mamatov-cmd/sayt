@@ -6,22 +6,31 @@ const MONGO_DB_NAME = process.env.MONGO_DB_NAME || 'GarajHub';
 let db = null;
 
 const DEFAULT_CATEGORIES = [
-  'Fintech',
-  'Edtech',
-  'AI/ML',
-  'E-commerce',
+  'Fintex',
+  'Edtex',
+  "Sun'iy intellekt / ML",
+  'Elektron savdo',
   'SaaS',
-  'Blockchain',
-  'Healthcare',
-  'Cybersecurity',
-  'GameDev',
-  'Networking',
-  'Productivity',
-  'Other'
+  'Blokcheyn',
+  "Sog'liqni saqlash",
+  'Kiberxavfsizlik',
+  "O'yin ishlab chiqish",
+  'Tarmoqlar',
+  'Samaradorlik',
+  'Boshqa'
 ];
 
+const ADMIN_DEFAULT = {
+  id: 'admin',
+  email: 'mamatovo354@gmail.com',
+  password: '123@Ozod',
+  name: 'Ozodbek Mamatov',
+  phone: '+998932303410',
+  role: 'admin'
+};
+
 const coll = (name) => {
-  if (!db) throw new Error('MongoDB not initialized');
+  if (!db) throw new Error("MongoDB ishga tushirilmagan");
   return db.collection(name);
 };
 
@@ -271,7 +280,7 @@ const run = async (sqlRaw, params = []) => {
     const duplicate = existingById || existingByEmail || existingCategoryByName;
     if (duplicate) {
       if (insert.ignore) return { id: duplicate.id || null, changes: 0 };
-      throw new Error('Duplicate key');
+      throw new Error("Takroriy kalit");
     }
 
     await coll(insert.table).insertOne(document);
@@ -344,7 +353,7 @@ const run = async (sqlRaw, params = []) => {
     return { id: null, changes: result.deletedCount || 0 };
   }
 
-  throw new Error(`Unsupported run query: ${sql}`);
+  throw new Error(`Qo'llab-quvvatlanmaydigan run so'rovi: ${sql}`);
 };
 
 const all = async (sqlRaw, params = []) => {
@@ -413,7 +422,7 @@ const all = async (sqlRaw, params = []) => {
 
   const select = parseSelect(sql);
   if (!select) {
-    throw new Error(`Unsupported all query: ${sql}`);
+    throw new Error(`Qo'llab-quvvatlanmaydigan all so'rovi: ${sql}`);
   }
 
   const rows = await fetchTableRows(select.table);
@@ -452,6 +461,62 @@ const get = async (sqlRaw, params = []) => {
 };
 
 const ensureDefaults = async () => {
+  const now = new Date().toISOString();
+
+  const adminById = await coll('users').findOne({ id: ADMIN_DEFAULT.id });
+  if (adminById) {
+    await coll('users').updateOne(
+      { id: ADMIN_DEFAULT.id },
+      {
+        $set: {
+          role: 'admin',
+          is_pro: 1,
+          pro_status: 'pro',
+          pro_updated_at: now,
+          banned: 0
+        }
+      }
+    );
+  } else {
+    const adminByEmail = await coll('users').findOne({ email: ADMIN_DEFAULT.email });
+    if (adminByEmail) {
+      await coll('users').updateOne(
+        { _id: adminByEmail._id },
+        {
+          $set: {
+            id: ADMIN_DEFAULT.id,
+            role: 'admin',
+            is_pro: 1,
+            pro_status: 'pro',
+            pro_updated_at: now,
+            banned: 0
+          }
+        }
+      );
+    } else {
+      await coll('users').insertOne({
+        id: ADMIN_DEFAULT.id,
+        email: ADMIN_DEFAULT.email,
+        password: ADMIN_DEFAULT.password,
+        name: ADMIN_DEFAULT.name,
+        phone: ADMIN_DEFAULT.phone,
+        role: ADMIN_DEFAULT.role,
+        bio: '',
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(ADMIN_DEFAULT.name)}&background=111&color=fff`,
+        banner: '',
+        portfolio_url: '',
+        skills: [],
+        languages: [],
+        tools: [],
+        created_at: now,
+        banned: 0,
+        is_pro: 1,
+        pro_status: 'pro',
+        pro_updated_at: now
+      });
+    }
+  }
+
   const platformExists = await coll('platform_settings').findOne({ id: 1 });
   if (!platformExists) {
     await coll('platform_settings').insertOne({
@@ -460,7 +525,7 @@ const ensureDefaults = async () => {
       plan_name: 'GarajHub Pro',
       price_text: '149 000 UZS / oy',
       startup_limit_free: 1,
-      updated_at: new Date().toISOString()
+      updated_at: now
     });
   }
 
@@ -472,7 +537,7 @@ const ensureDefaults = async () => {
       card_number: '',
       bank_name: '',
       receipt_note: 'Chek rasmini yuklang',
-      updated_at: new Date().toISOString()
+      updated_at: now
     });
   }
 
@@ -482,7 +547,7 @@ const ensureDefaults = async () => {
       DEFAULT_CATEGORIES.map((name, index) => ({
         id: index + 1,
         name,
-        created_at: new Date().toISOString()
+        created_at: now
       }))
     );
   }

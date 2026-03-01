@@ -6,7 +6,20 @@ import Logo from './r.png';
 
 const ADMIN_EMAIL = 'mamatovo354@gmail.com';
 const ADMIN_PASS = '123@Ozod';
-const DEFAULT_CATEGORIES = ["Fintech", "Edtech", "AI/ML", "E-commerce", "SaaS", "Blockchain", "Healthcare", "Cybersecurity", "GameDev", "Networking", "Productivity", "Other"];
+const DEFAULT_CATEGORIES = [
+  'Fintex',
+  'Edtex',
+  "Sun'iy intellekt / ML",
+  'Elektron savdo',
+  'SaaS',
+  'Blokcheyn',
+  "Sog'liqni saqlash",
+  'Kiberxavfsizlik',
+  "O'yin ishlab chiqish",
+  'Tarmoqlar',
+  'Samaradorlik',
+  'Boshqa'
+];
 const URL_REGEX = /(https?:\/\/[^\s]+)/g;
 
 // --- REUSABLE UI COMPONENTS ---
@@ -285,31 +298,25 @@ const App = () => {
     setTempBannerBase64(null);
   };
 
-  const getAdminProfile = () => {
-    const baseAdmin = {
-      id: 'admin',
-      email: ADMIN_EMAIL,
-      name: 'Ozodbek Mamatov',
-      phone: '+998932303410',
-      role: 'admin',
-      created_at: new Date().toISOString(),
-      skills: [],
-      languages: [],
-      tools: [],
-      avatar: `https://ui-avatars.com/api/?name=Ozodbek+Mamatov&background=111&color=fff`,
-      banner: '',
-      is_pro: true,
-      pro_status: 'pro'
-    };
-    try {
-      const raw = localStorage.getItem('adminProfile');
-      if (!raw) return baseAdmin;
-      const parsed = JSON.parse(raw);
-      return { ...baseAdmin, ...parsed, id: 'admin', role: 'admin', is_pro: true, pro_status: 'pro' };
-    } catch {
-      return baseAdmin;
-    }
-  };
+  const buildDefaultAdminUser = () => ({
+    id: 'admin',
+    email: ADMIN_EMAIL,
+    password: ADMIN_PASS,
+    name: 'Ozodbek Mamatov',
+    phone: '+998932303410',
+    role: 'admin',
+    created_at: new Date().toISOString(),
+    skills: [],
+    languages: [],
+    tools: [],
+    avatar: `https://ui-avatars.com/api/?name=Ozodbek+Mamatov&background=111&color=fff`,
+    banner: '',
+    bio: '',
+    portfolio_url: '',
+    is_pro: true,
+    pro_status: 'pro',
+    pro_updated_at: new Date().toISOString()
+  });
 
   const loadInitialData = async () => {
     try {
@@ -345,26 +352,26 @@ const App = () => {
       
       // Load current user from localStorage
       const savedUserId = localStorage.getItem('currentUserId');
+      let hasValidSession = false;
       if (savedUserId) {
-        if (savedUserId === 'admin') {
-          const admin = getAdminProfile();
-          setCurrentUser(admin);
-          const userNotifs = await dbOperations.getNotifications('admin').catch(() => []);
+        const user = await dbOperations.getUserById(savedUserId).catch(() => null);
+        if (user) {
+          hasValidSession = true;
+          setCurrentUser(user);
+          const userNotifs = await dbOperations.getNotifications(user.id).catch(() => []);
           setNotifications(Array.isArray(userNotifs) ? userNotifs : []);
-          const pending = await dbOperations.getProRequests({ role: 'admin', status: 'pending' }).catch(() => []);
-          setProRequests(Array.isArray(pending) ? pending : []);
-        } else {
-          const user = await dbOperations.getUserById(savedUserId);
-          if (user) {
-            setCurrentUser(user);
-            const userNotifs = await dbOperations.getNotifications(user.id);
-            setNotifications(userNotifs);
+          if (user.role === 'admin') {
+            const pending = await dbOperations.getProRequests({ role: 'admin', status: 'pending' }).catch(() => []);
+            setProRequests(Array.isArray(pending) ? pending : []);
+          } else {
             const myProRequests = await dbOperations.getProRequests({ userId: user.id }).catch(() => []);
             setProRequests(Array.isArray(myProRequests) ? myProRequests : []);
           }
+        } else {
+          localStorage.removeItem('currentUserId');
         }
       }
-      if (!savedUserId) {
+      if (!hasValidSession) {
         const alreadyPrompted = sessionStorage.getItem('authPromptShown');
         if (!alreadyPrompted) {
           openAuth('login');
@@ -412,7 +419,7 @@ const App = () => {
         setPendingInvitations(Array.isArray(invites) ? invites.filter((i) => i.status === 'pending') : []);
       }
     } catch (error) {
-      console.error('Workspace yuklashda xatolik:', error);
+      console.error("Ish maydonini yuklashda xatolik:", error);
       setWorkspaceContext(null);
       setStartupChatMessages([]);
       setMemberRecommendations([]);
@@ -486,7 +493,7 @@ const App = () => {
 
   useEffect(() => {
     const syncCurrentUser = async () => {
-      if (!currentUser || currentUser.id === 'admin') return;
+      if (!currentUser) return;
       const fresh = await dbOperations.getUserById(currentUser.id).catch(() => null);
       if (!fresh) return;
       setCurrentUser(fresh);
@@ -504,12 +511,13 @@ const App = () => {
       const userNotifs = await dbOperations.getNotifications(currentUser.id).catch(() => []);
       if (Array.isArray(userNotifs)) setNotifications(userNotifs);
 
-      if (currentUser.id !== 'admin') {
-        const freshUser = await dbOperations.getUserById(currentUser.id).catch(() => null);
-        if (freshUser) {
-          setCurrentUser(freshUser);
-          setAllUsers((prev) => prev.map((u) => (u.id === freshUser.id ? freshUser : u)));
-        }
+      const freshUser = await dbOperations.getUserById(currentUser.id).catch(() => null);
+      if (freshUser) {
+        setCurrentUser(freshUser);
+        setAllUsers((prev) => prev.map((u) => (u.id === freshUser.id ? freshUser : u)));
+      }
+
+      if (currentUser.role !== 'admin') {
         const invites = await dbOperations.getInvitations(currentUser.id).catch(() => []);
         if (Array.isArray(invites)) {
           setPendingInvitations(invites.filter((i) => i.status === 'pending'));
@@ -581,26 +589,34 @@ const App = () => {
     const pass = fd.get('password');
 
     if (authMode === 'login') {
-      if (email === ADMIN_EMAIL && pass === ADMIN_PASS) {
-        const admin = getAdminProfile();
-        setCurrentUser(admin);
-        localStorage.setItem('currentUserId', 'admin');
-        navigateTo('admin');
-      } else {
-        const user = await dbOperations.getUserByEmail(email);
-        if (user && user.banned) {
-          alert('Sizning profilingiz vaqtincha bloklangan.');
-          return;
-        }
-        if (user && user.password === pass) { 
-          setCurrentUser(user);
-          localStorage.setItem('currentUserId', user.id);
-          const userNotifs = await dbOperations.getNotifications(user.id);
-          setNotifications(userNotifs);
-          navigateTo('explore'); 
+      let user = await dbOperations.getUserByEmail(email).catch(() => null);
+
+      if (!user && email === ADMIN_EMAIL && pass === ADMIN_PASS) {
+        const existingAdmin = await dbOperations.getUserById('admin').catch(() => null);
+        if (existingAdmin) {
+          user = existingAdmin;
         } else {
-          alert('Xato email yoki parol');
+          const createdAdmin = await dbOperations.createUser(buildDefaultAdminUser()).catch(() => null);
+          if (createdAdmin) {
+            user = createdAdmin;
+            setAllUsers((prev) => [createdAdmin, ...prev.filter((u) => u.id !== createdAdmin.id)]);
+          }
         }
+      }
+
+      if (user && user.banned) {
+        alert('Sizning profilingiz vaqtincha bloklangan.');
+        return;
+      }
+
+      if (user && user.password === pass) {
+        setCurrentUser(user);
+        localStorage.setItem('currentUserId', user.id);
+        const userNotifs = await dbOperations.getNotifications(user.id).catch(() => []);
+        setNotifications(Array.isArray(userNotifs) ? userNotifs : []);
+        navigateTo(user.role === 'admin' ? 'admin' : 'explore');
+      } else {
+        alert('Xato email yoki parol');
       }
     } else {
       // Register
@@ -682,7 +698,7 @@ const App = () => {
     if (s.egasi_id === currentUser.id) return alert('O\'z loyihangizga qo\'shila olmaysiz.');
     if (s.a_zolar.some(m => m.user_id === currentUser.id)) return alert('Siz allaqachon jamoa a\'zosisiz.');
     
-    const specialty = prompt('Mutaxassisligingiz (Masalan: Designer, Backend Developer):');
+    const specialty = prompt('Mutaxassisligingiz (masalan: dizayner, backend dasturchi):');
     if (!specialty) return;
 
     const req = {
@@ -936,7 +952,7 @@ const App = () => {
     if (!currentUser) return;
     if (!canCreateStartup) {
       setShowProModal(true);
-      return alert(`Free rejimda faqat ${freeStartupLimit} ta startup yaratish mumkin.`);
+      return alert(`Bepul rejimda faqat ${freeStartupLimit} ta startup yaratish mumkin.`);
     }
     const fd = new FormData(e.currentTarget);
     const s = {
@@ -985,16 +1001,10 @@ const App = () => {
       skills: parseSkillsInput(editedSkillsText)
     };
     try {
-      if (currentUser.id === 'admin') {
-        const adminUpdated = { ...getAdminProfile(), ...updatedUser, id: 'admin', role: 'admin', is_pro: true, pro_status: 'pro' };
-        localStorage.setItem('adminProfile', JSON.stringify(adminUpdated));
-        setCurrentUser(adminUpdated);
-      } else {
-        const savedUser = await dbOperations.updateUser(currentUser.id, updatedUser);
-        if (!savedUser) throw new Error('Profil saqlanmadi');
-        setAllUsers(prev => prev.map(u => u.id === currentUser.id ? savedUser : u));
-        setCurrentUser(savedUser);
-      }
+      const savedUser = await dbOperations.updateUser(currentUser.id, updatedUser);
+      if (!savedUser) throw new Error('Profil saqlanmadi');
+      setAllUsers(prev => prev.map(u => u.id === currentUser.id ? savedUser : u));
+      setCurrentUser(savedUser);
 
       closeEditProfileModal();
       alert('Profil muvaffaqiyatli yangilandi!');
@@ -1006,12 +1016,7 @@ const App = () => {
   const handleOpenUserProfile = async (userId) => {
     if (!userId) return;
     try {
-      let user = null;
-      if (userId === 'admin') {
-        user = getAdminProfile();
-      } else {
-        user = allUsers.find((u) => u.id === userId) || await dbOperations.getUserById(userId);
-      }
+      const user = allUsers.find((u) => u.id === userId) || await dbOperations.getUserById(userId);
       if (!user) return alert('Foydalanuvchi topilmadi.');
       setViewedUser(user);
       setIsUserProfileModalOpen(true);
@@ -1030,7 +1035,7 @@ const App = () => {
     const title = prompt('Vazifa nomi:');
     if (!title) return;
     const desc = prompt('Batafsil tavsif:');
-    const deadline = prompt('Deadline (YYYY-MM-DD):');
+    const deadline = prompt('Muddat (YYYY-MM-DD):');
     
     const newTask = {
       id: `t_${Date.now()}`,
@@ -1312,7 +1317,7 @@ const App = () => {
       });
       await refreshWorkspaceAndStartup(selectedStartup.id);
     } catch (e) {
-      alert("Peer review yuborishda xatolik.");
+      alert("Jamoa bahosini yuborishda xatolik.");
     }
   };
 
@@ -1345,7 +1350,7 @@ const App = () => {
   const handleCreateMemberVote = async () => {
     if (!selectedStartup || !currentUser) return;
     if (!voteCaseDraft.target_user_id || !voteCaseDraft.reason.trim()) {
-      return alert("Target va sabab majburiy.");
+      return alert("Nomzod va sabab majburiy.");
     }
     try {
       await dbOperations.createMemberVote(selectedStartup.id, {
@@ -1356,7 +1361,7 @@ const App = () => {
       setVoteCaseDraft({ target_user_id: '', reason: '' });
       await refreshWorkspaceAndStartup(selectedStartup.id);
     } catch (e) {
-      alert("Founder vote ochishda xatolik.");
+      alert("Asoschi ovozini ochishda xatolik.");
     }
   };
 
@@ -1366,7 +1371,7 @@ const App = () => {
       await dbOperations.castMemberVote(voteCaseId, { voter_id: currentUser.id, vote });
       await refreshWorkspaceAndStartup(selectedStartup?.id);
     } catch (e) {
-      alert("Founder vote ovozida xatolik.");
+      alert("Asoschi ovozida xatolik.");
     }
   };
 
@@ -1391,24 +1396,24 @@ const App = () => {
       });
       await refreshWorkspaceAndStartup(selectedStartup.id);
     } catch (e) {
-      alert("Equity yozishda xatolik.");
+      alert("Ulush yozishda xatolik.");
     }
   };
 
   const handleArchiveEquity = async (equityId) => {
-    if (!confirm("Bu equity yozuvini arxiv qilasizmi?")) return;
+    if (!confirm("Bu ulush yozuvini arxiv qilasizmi?")) return;
     try {
       await dbOperations.archiveEquity(equityId);
       await refreshWorkspaceAndStartup(selectedStartup?.id);
     } catch (e) {
-      alert("Equity arxivlashda xatolik.");
+      alert("Ulushni arxivlashda xatolik.");
     }
   };
 
   const handleCreateAgreement = async () => {
     if (!selectedStartup) return;
     if (!agreementDraft.title.trim() || !agreementDraft.body.trim()) {
-      return alert("Agreement title va body majburiy.");
+      return alert("Kelishuv sarlavhasi va matni majburiy.");
     }
     try {
       await dbOperations.createAgreement(selectedStartup.id, {
@@ -1420,7 +1425,7 @@ const App = () => {
       setAgreementDraft({ title: '', body: '', status: 'draft' });
       await refreshWorkspaceAndStartup(selectedStartup.id);
     } catch (e) {
-      alert("Agreement yaratishda xatolik.");
+      alert("Kelishuv yaratishda xatolik.");
     }
   };
 
@@ -1435,7 +1440,7 @@ const App = () => {
       });
       await refreshWorkspaceAndStartup(selectedStartup?.id);
     } catch (e) {
-      alert("Agreement imzolashda xatolik.");
+      alert("Kelishuvni imzolashda xatolik.");
     }
   };
 
@@ -1460,7 +1465,7 @@ const App = () => {
       });
       await refreshWorkspaceAndStartup(selectedStartup.id);
     } catch (e) {
-      alert("Investor introduction yaratishda xatolik.");
+      alert("Investor bo'yicha yozuv yaratishda xatolik.");
     }
   };
 
@@ -1475,7 +1480,7 @@ const App = () => {
       });
       await refreshWorkspaceAndStartup(selectedStartup.id);
     } catch (e) {
-      alert("Registry yangilashda xatolik.");
+      alert("Ro'yxat ma'lumotini yangilashda xatolik.");
     }
   };
 
@@ -1563,6 +1568,57 @@ const App = () => {
     requests: "So'rovlar",
     admin: 'Boshqaruv'
   }[activeTab] || activeTab;
+
+  const mapStatusText = (value) => {
+    const map = {
+      pending_admin: 'Moderatsiyada',
+      pending: 'Kutilmoqda',
+      approved: 'Tasdiqlangan',
+      rejected: 'Rad etilgan',
+      open: 'Ochiq',
+      resolved: 'Yakunlangan',
+      active: 'Faol',
+      archived: 'Arxiv',
+      draft: 'Qoralama',
+      locked: 'Qulflangan',
+      planned: 'Rejalangan',
+      introduced: 'Tanishtirilgan',
+      meeting: 'Uchrashuv',
+      won: 'Yakunlangan',
+      lost: "To'xtatilgan",
+      live: 'Faol',
+      pivoted: "Yo'nalish o'zgargan",
+      closed: 'Yopilgan',
+      acquired: 'Sotilgan',
+      keep: 'Qoldirish',
+      remove: 'Chiqarish'
+    };
+    return map[value] || value;
+  };
+
+  const mapRoleText = (value) => {
+    if (value === 'admin') return 'Admin';
+    if (value === 'user') return 'Foydalanuvchi';
+    return value;
+  };
+
+  const mapRiskLevelText = (value) => {
+    const map = { high: 'yuqori', medium: "o'rtacha", low: 'past' };
+    return map[value] || value;
+  };
+
+  const mapRiskTypeText = (value) => {
+    const map = {
+      deadline: 'muddat',
+      execution: 'bajarilish',
+      delivery: 'yetkazish',
+      governance: 'boshqaruv',
+      team: 'jamoa',
+      equity: 'ulush',
+      activity: 'faollik'
+    };
+    return map[value] || value;
+  };
 
   // --- RENDERERS ---
 
@@ -1730,10 +1786,10 @@ const App = () => {
         </div>
 
         <form onSubmit={handleCreateStartup} className="bg-white border border-gray-200 rounded-2xl p-6 md:p-8 space-y-6 md:space-y-8 shadow-md">
-          <FileUpload label="Startup Logosi" onChange={handleFileChange} preview={tempFileBase64 || undefined} />
+          <FileUpload label="Startup logotipi" onChange={handleFileChange} preview={tempFileBase64 || undefined} />
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
-            <Input required name="nomi" label="Startup Nomi" placeholder="Rocket.io" icon="fa-rocket" />
+            <Input required name="nomi" label="Startup nomi" placeholder="Rocket.io" icon="fa-rocket" />
             <div className="space-y-1.5 w-full">
               <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-widest ml-1">Kategoriya</label>
               <select name="category" className="w-full h-[44px] bg-white border border-gray-200 rounded-lg px-4 text-[14px] outline-none focus:border-black shadow-sm">
@@ -1752,7 +1808,7 @@ const App = () => {
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
             <Input name="github_url" label="GitHub" placeholder="https://github.com/..." icon="fa-github" />
-            <Input name="website_url" label="Website" placeholder="https://..." icon="fa-globe" />
+            <Input name="website_url" label="Veb-sayt" placeholder="https://..." icon="fa-globe" />
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 md:gap-4 pt-6 border-t border-gray-50">
@@ -1793,7 +1849,7 @@ const App = () => {
                   </div>
                   <div className="flex flex-wrap justify-center md:justify-start gap-3 md:gap-4 text-[10px] md:text-[11px] font-bold text-gray-400 uppercase tracking-widest">
                     <span>{s.category}</span>
-                    <span><i className="fa-solid fa-users mr-1"></i> {s.a_zolar.length} builder</span>
+                    <span><i className="fa-solid fa-users mr-1"></i> {s.a_zolar.length} a'zo</span>
                     <span><i className="fa-solid fa-tasks mr-1"></i> {s.tasks?.length || 0} vazifa</span>
                   </div>
                 </div>
@@ -1847,7 +1903,7 @@ const App = () => {
         <nav className="flex items-center border-b border-gray-100 gap-6 md:gap-8 h-10 overflow-x-auto no-scrollbar scroll-smooth">
           {[
             { key: 'vazifalar', label: 'Vazifalar' },
-            { key: 'chat', label: 'Chat' },
+            { key: 'chat', label: 'Suhbat' },
             { key: 'reputatsiya', label: 'Reputatsiya' },
             { key: 'governance', label: 'Boshqaruv' },
             { key: 'kapital', label: 'Ulush' },
@@ -1869,7 +1925,7 @@ const App = () => {
         {workspaceLoading && (
           <div className="mt-4 flex items-center gap-2 text-[11px] uppercase tracking-widest font-bold text-emerald-700">
             <i className="fa-solid fa-spinner animate-spin"></i>
-            Workspace loading...
+            Ish maydoni yuklanmoqda...
           </div>
         )}
 
@@ -1963,7 +2019,7 @@ const App = () => {
                       );
                     })}
                     {startupChatMessages.length === 0 && (
-                      <EmptyState icon="fa-comments" title="Chat bo'sh" subtitle="Birinchi xabarni yuboring." />
+                      <EmptyState icon="fa-comments" title="Suhbat bo'sh" subtitle="Birinchi xabarni yuboring." />
                     )}
                     <div ref={startupChatEndRef} />
                   </div>
@@ -2012,7 +2068,7 @@ const App = () => {
                   </div>
                 </div>
                 <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-4">
-                  <h3 className="text-[12px] font-black uppercase tracking-widest text-gray-600">Chat qoidalari</h3>
+                  <h3 className="text-[12px] font-black uppercase tracking-widest text-gray-600">Suhbat qoidalari</h3>
                   <div className="space-y-3 text-[12px] text-gray-600">
                     <p>Faqat shu startup a'zolari chatni ko'ra oladi.</p>
                     <p>Link yuborsangiz avtomatik bosiladigan ko'rinishda chiqadi.</p>
@@ -2021,7 +2077,7 @@ const App = () => {
                 </div>
               </div>
             ) : (
-              <EmptyState icon="fa-lock" title="Chat yopiq" subtitle="Chat faqat startup a'zolariga ochiq." />
+              <EmptyState icon="fa-lock" title="Suhbat yopiq" subtitle="Suhbat faqat startup a'zolariga ochiq." />
             )
           )}
 
@@ -2043,13 +2099,13 @@ const App = () => {
                   </div>
                 ))}
                 {workspaceReputation.members.length === 0 && (
-                  <EmptyState icon="fa-chart-line" title="Reputatsiya ma'lumoti yo'q" subtitle="Peer reviewlar boshlangandan keyin grafik chiqadi." />
+                  <EmptyState icon="fa-chart-line" title="Reputatsiya ma'lumoti yo'q" subtitle="Jamoa baholari boshlangandan keyin grafik chiqadi." />
                 )}
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
-                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Peer Review Qo'shish</h3>
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Jamoa bahosi qo'shish</h3>
                   {(isOwner || isMember) ? (
                     <div className="space-y-4">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2100,10 +2156,10 @@ const App = () => {
                         placeholder="Ish sifati bo'yicha izoh..."
                         className="w-full min-h-[90px] border border-gray-200 rounded-lg p-3 text-[13px]"
                       />
-                      <Button onClick={handleSubmitPeerReview} className="w-full md:w-auto">Review yuborish</Button>
+                      <Button onClick={handleSubmitPeerReview} className="w-full md:w-auto">Baho yuborish</Button>
                     </div>
                   ) : (
-                    <p className="text-[12px] text-gray-500">Review yuborish uchun jamoa a'zosi bo'lish kerak.</p>
+                    <p className="text-[12px] text-gray-500">Baho yuborish uchun jamoa a'zosi bo'lish kerak.</p>
                   )}
                 </div>
 
@@ -2117,14 +2173,14 @@ const App = () => {
                       </div>
                     ))}
                     {workspaceReputation.edges.length === 0 && (
-                      <p className="text-[12px] text-gray-500">Hali graph edge yo'q.</p>
+                      <p className="text-[12px] text-gray-500">Hali bog'lanishlar yo'q.</p>
                     )}
                   </div>
                 </div>
               </div>
 
               <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-3">
-                <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">So'nggi Reviewlar</h3>
+                <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">So'nggi baholar</h3>
                 {workspaceReviews.slice(0, 8).map((r) => (
                   <div key={r.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/60">
                       <p className="text-[12px] font-bold text-gray-800">{`${r.from_user_name} -> ${r.to_user_name}`}</p>
@@ -2133,7 +2189,7 @@ const App = () => {
                     <p className="text-[10px] text-gray-400 mt-2">{new Date(r.created_at).toLocaleString()}</p>
                   </div>
                 ))}
-                {workspaceReviews.length === 0 && <p className="text-[12px] text-gray-500">Hali review yo'q.</p>}
+                {workspaceReviews.length === 0 && <p className="text-[12px] text-gray-500">Hali baholar yo'q.</p>}
               </div>
             </div>
             ) : renderProLocked("Reputatsiya grafigi Pro uchun")
@@ -2151,7 +2207,7 @@ const App = () => {
                         label="Qaror sarlavhasi"
                         value={decisionDraft.title}
                         onChange={(e) => setDecisionDraft((p) => ({ ...p, title: e.target.value }))}
-                        placeholder="Masalan: Product pivot"
+                        placeholder="Masalan: Mahsulot yo'nalishini o'zgartirish"
                       />
                       <TextArea
                         label="Izoh"
@@ -2167,7 +2223,7 @@ const App = () => {
                 </div>
 
                 <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
-                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Founder Vote (Kim qoladi/kim chiqadi)</h3>
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Asoschi ovozi (kim qoladi/kim chiqadi)</h3>
                   {(isOwner || isMember) ? (
                     <>
                       <select
@@ -2186,10 +2242,10 @@ const App = () => {
                         onChange={(e) => setVoteCaseDraft((p) => ({ ...p, reason: e.target.value }))}
                         placeholder="Aniq sabab yozing..."
                       />
-                      <Button onClick={handleCreateMemberVote} variant="danger">Founder vote ochish</Button>
+                      <Button onClick={handleCreateMemberVote} variant="danger">Asoschi ovozini ochish</Button>
                     </>
                   ) : (
-                    <p className="text-[12px] text-gray-500">Faqat jamoa a'zolari founder vote ochadi.</p>
+                    <p className="text-[12px] text-gray-500">Faqat jamoa a'zolari asoschi ovozini ochadi.</p>
                   )}
                 </div>
               </div>
@@ -2201,7 +2257,7 @@ const App = () => {
                     <div key={d.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/40">
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-[13px] font-bold">{d.title}</p>
-                        <Badge variant={d.status === 'approved' ? 'success' : d.status === 'rejected' ? 'danger' : 'default'}>{d.status}</Badge>
+                        <Badge variant={d.status === 'approved' ? 'success' : d.status === 'rejected' ? 'danger' : 'default'}>{mapStatusText(d.status)}</Badge>
                       </div>
                       {d.description && <p className="text-[12px] text-gray-600 mt-2">{d.description}</p>}
                       <p className="text-[11px] text-gray-500 mt-2">Tasdiq: {d.votes?.approve || 0} | Rad: {d.votes?.reject || 0}</p>
@@ -2217,24 +2273,24 @@ const App = () => {
                 </div>
 
                 <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-3">
-                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Founder Vote Cases</h3>
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Asoschi ovozi holatlari</h3>
                   {workspaceMemberVotes.map((v) => (
                     <div key={v.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/40">
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-[13px] font-bold">{v.target_user_name}</p>
-                        <Badge variant={v.status === 'resolved' ? 'active' : 'default'}>{v.status}{v.resolution ? `:${v.resolution}` : ''}</Badge>
+                        <Badge variant={v.status === 'resolved' ? 'active' : 'default'}>{mapStatusText(v.status)}{v.resolution ? `: ${mapStatusText(v.resolution)}` : ''}</Badge>
                       </div>
                       <p className="text-[12px] text-gray-600 mt-2">{v.reason}</p>
-                      <p className="text-[11px] text-gray-500 mt-2">Keep: {v.votes?.keep || 0} | Remove: {v.votes?.remove || 0}</p>
+                      <p className="text-[11px] text-gray-500 mt-2">Qoldirish: {v.votes?.keep || 0} | Chiqarish: {v.votes?.remove || 0}</p>
                       {v.status === 'open' && (isOwner || isMember) && currentUser?.id !== v.target_user_id && (
                         <div className="flex gap-2 mt-3">
-                          <Button size="sm" variant="secondary" onClick={() => handleCastMemberVote(v.id, 'keep')}>Keep</Button>
-                          <Button size="sm" variant="danger" onClick={() => handleCastMemberVote(v.id, 'remove')}>Remove</Button>
+                          <Button size="sm" variant="secondary" onClick={() => handleCastMemberVote(v.id, 'keep')}>Qoldirish</Button>
+                          <Button size="sm" variant="danger" onClick={() => handleCastMemberVote(v.id, 'remove')}>Chiqarish</Button>
                         </div>
                       )}
                     </div>
                   ))}
-                  {workspaceMemberVotes.length === 0 && <p className="text-[12px] text-gray-500">Founder vote case yo'q.</p>}
+                  {workspaceMemberVotes.length === 0 && <p className="text-[12px] text-gray-500">Asoschi ovozi holati yo'q.</p>}
                 </div>
               </div>
             </div>
@@ -2277,11 +2333,11 @@ const App = () => {
                   <div key={e.id} className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center gap-4">
                     <div className="flex-grow">
                       <p className="text-[14px] font-bold">{e.user_name}</p>
-                      <p className="text-[12px] text-gray-500">{e.share_percent}% | Vesting {e.vesting_months} oy | Cliff {e.cliff_months} oy</p>
+                      <p className="text-[12px] text-gray-500">{e.share_percent}% | Bosqichli muddat {e.vesting_months} oy | Kutish davri {e.cliff_months} oy</p>
                       {e.notes && <p className="text-[12px] text-gray-600 mt-1">{e.notes}</p>}
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant={e.status === 'active' ? 'success' : 'default'}>{e.status}</Badge>
+                      <Badge variant={e.status === 'active' ? 'success' : 'default'}>{mapStatusText(e.status)}</Badge>
                       {isOwner && e.status !== 'archived' && <Button size="sm" variant="ghost" className="border border-gray-200" onClick={() => handleArchiveEquity(e.id)}>Arxiv</Button>}
                     </div>
                   </div>
@@ -2301,10 +2357,10 @@ const App = () => {
                   <>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <select value={registryDraft.lifecycle_status} onChange={(e) => setRegistryDraft((p) => ({ ...p, lifecycle_status: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]">
-                        <option value="live">live</option>
-                        <option value="pivoted">pivoted</option>
-                        <option value="closed">closed</option>
-                        <option value="acquired">acquired</option>
+                        <option value="live">Faol</option>
+                        <option value="pivoted">Yo'nalish o'zgargan</option>
+                        <option value="closed">Yopilgan</option>
+                        <option value="acquired">Sotilgan</option>
                       </select>
                       <input type="number" step="0.1" value={registryDraft.success_fee_percent} onChange={(e) => setRegistryDraft((p) => ({ ...p, success_fee_percent: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]" placeholder="Muvaffaqiyat foizi %" />
                       <Button onClick={handleUpdateRegistry}>Ro'yxatni yangilash</Button>
@@ -2312,23 +2368,23 @@ const App = () => {
                     <textarea value={registryDraft.registry_notes} onChange={(e) => setRegistryDraft((p) => ({ ...p, registry_notes: e.target.value }))} className="w-full min-h-[90px] border border-gray-200 rounded-lg p-3 text-[13px]" placeholder="Startup ro'yxati bo'yicha izoh..." />
                   </>
                 ) : (
-                  <p className="text-[12px] text-gray-500">Lifecycle: {registryDraft.lifecycle_status} | Success fee: {registryDraft.success_fee_percent}%</p>
+                  <p className="text-[12px] text-gray-500">Bosqich: {mapStatusText(registryDraft.lifecycle_status)} | Muvaffaqiyat ulushi: {registryDraft.success_fee_percent}%</p>
                 )}
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
-                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Safekeeping Agreements</h3>
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Saqlash kelishuvlari</h3>
                   {isOwner && (
                     <div className="space-y-3">
-                      <input value={agreementDraft.title} onChange={(e) => setAgreementDraft((p) => ({ ...p, title: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px] w-full" placeholder="Agreement nomi" />
+                      <input value={agreementDraft.title} onChange={(e) => setAgreementDraft((p) => ({ ...p, title: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px] w-full" placeholder="Kelishuv nomi" />
                       <textarea value={agreementDraft.body} onChange={(e) => setAgreementDraft((p) => ({ ...p, body: e.target.value }))} className="w-full min-h-[90px] border border-gray-200 rounded-lg p-3 text-[13px]" placeholder="Kelishuv matni..." />
                       <select value={agreementDraft.status} onChange={(e) => setAgreementDraft((p) => ({ ...p, status: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px] w-full">
-                        <option value="draft">draft</option>
-                        <option value="active">active</option>
-                        <option value="locked">locked</option>
+                        <option value="draft">Qoralama</option>
+                        <option value="active">Faol</option>
+                        <option value="locked">Qulflangan</option>
                       </select>
-                      <Button onClick={handleCreateAgreement}>Agreement yaratish</Button>
+                      <Button onClick={handleCreateAgreement}>Kelishuv yaratish</Button>
                     </div>
                   )}
                   <div className="space-y-3">
@@ -2336,39 +2392,39 @@ const App = () => {
                       <div key={a.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/40">
                         <div className="flex items-center justify-between">
                           <p className="text-[13px] font-bold">{a.title}</p>
-                          <Badge>{a.status}</Badge>
+                          <Badge>{mapStatusText(a.status)}</Badge>
                         </div>
                         <p className="text-[12px] text-gray-600 mt-2 whitespace-pre-wrap">{a.body}</p>
                         <p className="text-[11px] text-gray-500 mt-2">Imzolaganlar: {(a.signed_by || []).length}</p>
                         {currentUser && !(a.signed_by || []).includes(currentUser.id) && (isOwner || isMember) && (
-                          <Button size="sm" variant="secondary" className="mt-3" onClick={() => handleSignAgreement(a)}>Sign</Button>
+                          <Button size="sm" variant="secondary" className="mt-3" onClick={() => handleSignAgreement(a)}>Imzolash</Button>
                         )}
                       </div>
                     ))}
-                    {workspaceAgreements.length === 0 && <p className="text-[12px] text-gray-500">Agreement yo'q.</p>}
+                    {workspaceAgreements.length === 0 && <p className="text-[12px] text-gray-500">Kelishuv yo'q.</p>}
                   </div>
                 </div>
 
                 <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-4">
-                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Investor Introduction Log</h3>
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Investor aloqalari jurnali</h3>
                   {(isOwner || isMember) && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <input value={investorDraft.investor_name} onChange={(e) => setInvestorDraft((p) => ({ ...p, investor_name: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]" placeholder="Investor nomi" />
                       <select value={investorDraft.stage} onChange={(e) => setInvestorDraft((p) => ({ ...p, stage: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]">
-                        <option value="pre-seed">pre-seed</option>
-                        <option value="seed">seed</option>
-                        <option value="series-a">series-a</option>
+                        <option value="pre-seed">Dastlabki bosqich</option>
+                        <option value="seed">Urug' bosqichi</option>
+                        <option value="series-a">A seriya</option>
                       </select>
-                      <input type="number" value={investorDraft.amount} onChange={(e) => setInvestorDraft((p) => ({ ...p, amount: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]" placeholder="Amount (USD)" />
+                      <input type="number" value={investorDraft.amount} onChange={(e) => setInvestorDraft((p) => ({ ...p, amount: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]" placeholder="Miqdor (USD)" />
                       <select value={investorDraft.status} onChange={(e) => setInvestorDraft((p) => ({ ...p, status: e.target.value }))} className="h-10 px-3 border border-gray-200 rounded-lg text-[13px]">
-                        <option value="planned">planned</option>
-                        <option value="introduced">introduced</option>
-                        <option value="meeting">meeting</option>
-                        <option value="won">won</option>
-                        <option value="lost">lost</option>
+                        <option value="planned">Rejalangan</option>
+                        <option value="introduced">Tanishtirilgan</option>
+                        <option value="meeting">Uchrashuv</option>
+                        <option value="won">Yakunlangan</option>
+                        <option value="lost">To'xtatilgan</option>
                       </select>
-                      <textarea value={investorDraft.notes} onChange={(e) => setInvestorDraft((p) => ({ ...p, notes: e.target.value }))} className="md:col-span-2 w-full min-h-[80px] border border-gray-200 rounded-lg p-3 text-[13px]" placeholder="Notes..." />
-                      <Button onClick={handleCreateInvestorIntro} className="md:col-span-2">Investor log qo'shish</Button>
+                      <textarea value={investorDraft.notes} onChange={(e) => setInvestorDraft((p) => ({ ...p, notes: e.target.value }))} className="md:col-span-2 w-full min-h-[80px] border border-gray-200 rounded-lg p-3 text-[13px]" placeholder="Izoh..." />
+                      <Button onClick={handleCreateInvestorIntro} className="md:col-span-2">Investor yozuvi qo'shish</Button>
                     </div>
                   )}
                   <div className="space-y-3">
@@ -2376,14 +2432,14 @@ const App = () => {
                       <div key={i.id} className="border border-gray-100 rounded-xl p-4 bg-gray-50/40">
                         <div className="flex items-center justify-between">
                           <p className="text-[13px] font-bold">{i.investor_name}</p>
-                          <Badge>{i.status}</Badge>
+                          <Badge>{mapStatusText(i.status)}</Badge>
                         </div>
-                        <p className="text-[12px] text-gray-600 mt-2">Stage: {i.stage} | Amount: ${Number(i.amount || 0).toLocaleString()}</p>
-                        <p className="text-[11px] text-gray-500 mt-1">By: {i.introduced_by_name || i.introduced_by}</p>
+                        <p className="text-[12px] text-gray-600 mt-2">Bosqich: {i.stage} | Miqdor: ${Number(i.amount || 0).toLocaleString()}</p>
+                        <p className="text-[11px] text-gray-500 mt-1">Kiritgan: {i.introduced_by_name || i.introduced_by}</p>
                         {i.notes && <p className="text-[12px] text-gray-600 mt-2">{i.notes}</p>}
                       </div>
                     ))}
-                    {workspaceInvestorIntros.length === 0 && <p className="text-[12px] text-gray-500">Investor intro log yo'q.</p>}
+                    {workspaceInvestorIntros.length === 0 && <p className="text-[12px] text-gray-500">Investor jurnali bo'sh.</p>}
                   </div>
                 </div>
               </div>
@@ -2399,9 +2455,9 @@ const App = () => {
                   <div className="bg-gradient-to-br from-slate-900 via-gray-900 to-black text-white rounded-2xl p-8 border border-slate-700 shadow-2xl">
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                       <div>
-                        <p className="text-[11px] uppercase tracking-[0.25em] text-slate-300 font-bold">AI Decision Engine</p>
-                        <h3 className="text-3xl font-black mt-2">Risk Score: {workspaceAiRisk.score}/100</h3>
-                        <p className="text-[13px] text-slate-300 mt-2">Level: {workspaceAiRisk.level}</p>
+                        <p className="text-[11px] uppercase tracking-[0.25em] text-slate-300 font-bold">AI qaror tizimi</p>
+                        <h3 className="text-3xl font-black mt-2">Xavf bali: {workspaceAiRisk.score}/100</h3>
+                        <p className="text-[13px] text-slate-300 mt-2">Daraja: {mapRiskLevelText(workspaceAiRisk.level)}</p>
                       </div>
                       <div className="w-32 h-32 rounded-full border-8 border-white/20 flex items-center justify-center text-3xl font-black bg-white/5">
                         {workspaceAiRisk.score}
@@ -2411,10 +2467,10 @@ const App = () => {
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {[
-                      { label: 'Overdue', value: workspaceAiRisk.metrics?.overdue_tasks ?? 0 },
-                      { label: 'Stalled', value: workspaceAiRisk.metrics?.stalled_tasks ?? 0 },
-                      { label: 'Completion', value: `${workspaceAiRisk.metrics?.completion_rate ?? 0}%` },
-                      { label: 'Activity 7d', value: workspaceAiRisk.metrics?.activity_7d ?? 0 }
+                      { label: "Muddati o'tgan", value: workspaceAiRisk.metrics?.overdue_tasks ?? 0 },
+                      { label: "To'xtab qolgan", value: workspaceAiRisk.metrics?.stalled_tasks ?? 0 },
+                      { label: 'Bajarilish', value: `${workspaceAiRisk.metrics?.completion_rate ?? 0}%` },
+                      { label: '7 kun faollik', value: workspaceAiRisk.metrics?.activity_7d ?? 0 }
                     ].map((m, idx) => (
                       <div key={idx} className="bg-white border border-gray-200 rounded-xl p-5 text-center">
                         <p className="text-2xl font-black">{m.value}</p>
@@ -2424,10 +2480,10 @@ const App = () => {
                   </div>
 
                   <div className="bg-white border border-gray-200 rounded-2xl p-6 space-y-3">
-                    <h4 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Risk Signals</h4>
+                    <h4 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Xavf signallari</h4>
                     {workspaceAiRisk.signals?.map((s, idx) => (
                       <div key={idx} className={`border rounded-xl p-4 ${s.level === 'high' ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`}>
-                        <p className="text-[11px] uppercase tracking-widest font-bold">{s.type} / {s.level}</p>
+                        <p className="text-[11px] uppercase tracking-widest font-bold">{mapRiskTypeText(s.type)} / {mapRiskLevelText(s.level)}</p>
                         <p className="text-[13px] mt-1">{s.text}</p>
                       </div>
                     ))}
@@ -2437,7 +2493,7 @@ const App = () => {
                   </div>
                 </>
               ) : (
-                <EmptyState icon="fa-brain" title="AI risk hisoblanmadi" subtitle="Workspace ma'lumotlarini to'ldiring va qayta urinib ko'ring." />
+                <EmptyState icon="fa-brain" title="AI xavf hisoblanmadi" subtitle="Ish maydoni ma'lumotlarini to'ldiring va qayta urinib ko'ring." />
               )}
             </div>
             ) : renderProLocked("AI tahlil Pro uchun")
@@ -2481,7 +2537,7 @@ const App = () => {
                           className="flex items-center gap-3 min-w-0 text-left"
                         >
                           <img
-                            src={candidate.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(candidate.name || 'User')}&background=111&color=fff`}
+                            src={candidate.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(candidate.name || 'Foydalanuvchi')}&background=111&color=fff`}
                             className="w-11 h-11 rounded-xl object-cover border border-gray-100 shrink-0"
                             alt={candidate.name}
                           />
@@ -2539,7 +2595,7 @@ const App = () => {
         <div className="bg-white/90 backdrop-blur border border-gray-200 rounded-3xl overflow-hidden shadow-xl group">
           <div className="relative h-[170px] md:h-[220px]">
             {currentUser.banner ? (
-              <img src={currentUser.banner} className="absolute inset-0 w-full h-full object-cover" alt="Profile banner" />
+              <img src={currentUser.banner} className="absolute inset-0 w-full h-full object-cover" alt="Profil banneri" />
             ) : (
               <div className="absolute inset-0 bg-gradient-to-r from-cyan-600 via-teal-600 to-emerald-500" />
             )}
@@ -2556,13 +2612,13 @@ const App = () => {
           <div className="px-6 md:px-10 pb-7 md:pb-9 -mt-12 md:-mt-14">
             <div className="flex flex-col md:flex-row md:items-end gap-5">
               <div className="relative group/avatar">
-                <img src={currentUser.avatar} className="w-24 h-24 md:w-28 md:h-28 rounded-2xl border-4 border-white shadow-xl object-cover" alt="Profile" />
+                <img src={currentUser.avatar} className="w-24 h-24 md:w-28 md:h-28 rounded-2xl border-4 border-white shadow-xl object-cover" alt="Profil rasmi" />
                 <button onClick={openEditProfileModal} className="absolute inset-0 bg-black/40 rounded-2xl flex items-center justify-center text-white opacity-0 group-hover/avatar:opacity-100 transition-all"><i className="fa-solid fa-camera"></i></button>
               </div>
               <div className="flex-grow">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-2xl md:text-3xl font-black tracking-tight">{currentUser.name}</h2>
-                  <Badge variant={currentUser.is_pro ? 'success' : 'default'}>{currentUser.is_pro ? 'PRO' : 'FREE'}</Badge>
+                  <Badge variant={currentUser.is_pro ? 'success' : 'default'}>{currentUser.is_pro ? 'PRO' : 'BEPUL'}</Badge>
                 </div>
                 <div className="flex gap-2 mt-2 flex-wrap">
                   <Badge variant="active" className="truncate max-w-[220px]">{currentUser.email}</Badge>
@@ -2602,7 +2658,7 @@ const App = () => {
           <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 rounded-2xl p-6 md:p-8 text-white shadow-xl">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.25em] font-bold text-white/80">Reputation Graph</p>
+                <p className="text-[10px] uppercase tracking-[0.25em] font-bold text-white/80">Reputatsiya grafigi</p>
                 <h3 className="text-3xl md:text-4xl font-black mt-2">{profileReputation.score}/100</h3>
                 <p className="text-[13px] mt-2 text-white/90">
                   Tarmoq: {profileReputation.stats?.network_size || 0} | Hamkorlik: {profileReputation.stats?.collaboration_count || 0} loyiha
@@ -2611,7 +2667,7 @@ const App = () => {
               <div className="grid grid-cols-2 gap-3 w-full md:w-auto">
                 <div className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-center">
                   <p className="text-xl font-black">{profileReputation.stats?.avg_rating || 0}</p>
-                  <p className="text-[10px] uppercase tracking-widest">Avg Rating</p>
+                  <p className="text-[10px] uppercase tracking-widest">O'rtacha baho</p>
                 </div>
                 <div className="bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-center">
                   <p className="text-xl font-black">{profileReputation.stats?.completion_rate || 0}%</p>
@@ -2674,7 +2730,7 @@ const App = () => {
       <div className="space-y-8 md:space-y-12 animate-in fade-in">
         <header className="flex flex-col gap-4">
           <div className="flex items-center gap-4">
-            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight italic">Admin Panel</h1>
+            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight italic">Boshqaruv paneli</h1>
             <Badge variant="danger" size="md">{stats.pending_startups}</Badge>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -2727,8 +2783,8 @@ const App = () => {
                   <p className="text-[14px] font-bold truncate">{u.name}</p>
                   <p className="text-[12px] text-gray-500 truncate">{u.email}</p>
                   <div className="flex gap-2 mt-2">
-                    <Badge variant={u.role === 'admin' ? 'active' : 'default'}>{u.role}</Badge>
-                    {u.banned && <Badge variant="danger">Banned</Badge>}
+                    <Badge variant={u.role === 'admin' ? 'active' : 'default'}>{mapRoleText(u.role)}</Badge>
+                    {u.banned && <Badge variant="danger">Bloklangan</Badge>}
                     {u.is_pro && <Badge variant="success">PRO</Badge>}
                   </div>
                 </div>
@@ -2738,15 +2794,15 @@ const App = () => {
                     onChange={(e) => handleAdminUserRole(u.id, e.target.value)}
                     className="h-10 px-3 text-[12px] border border-gray-200 rounded-lg bg-white"
                   >
-                    <option value="user">user</option>
-                    <option value="admin">admin</option>
+                    <option value="user">Foydalanuvchi</option>
+                    <option value="admin">Admin</option>
                   </select>
                   <Button
                     variant={u.banned ? 'secondary' : 'danger'}
                     className="h-10 px-5"
                     onClick={() => handleAdminUserBan(u.id, !u.banned)}
                   >
-                    {u.banned ? 'Unban' : 'Ban'}
+                    {u.banned ? 'Blokdan chiqarish' : 'Bloklash'}
                   </Button>
                   <Button
                     variant={u.is_pro ? 'secondary' : 'primary'}
@@ -2772,7 +2828,7 @@ const App = () => {
                   <p className="text-[14px] font-bold truncate">{s.nomi}</p>
                   <p className="text-[12px] text-gray-500 truncate">{s.egasi_name}</p>
                   <div className="flex gap-2 mt-2">
-                    <Badge variant={s.status === 'approved' ? 'success' : s.status === 'rejected' ? 'danger' : 'default'}>{s.status}</Badge>
+                    <Badge variant={s.status === 'approved' ? 'success' : s.status === 'rejected' ? 'danger' : 'default'}>{mapStatusText(s.status)}</Badge>
                     <Badge>{s.category}</Badge>
                   </div>
                 </div>
@@ -2795,7 +2851,7 @@ const App = () => {
                 <Badge variant={adminProConfigDraft.pro_enabled ? 'success' : 'danger'}>{adminProConfigDraft.pro_enabled ? 'YOQILGAN' : "O'CHIRILGAN"}</Badge>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input label="Plan nomi" value={adminProConfigDraft.plan_name} onChange={(e) => setAdminProConfigDraft((p) => ({ ...p, plan_name: e.target.value }))} />
+                <Input label="Reja nomi" value={adminProConfigDraft.plan_name} onChange={(e) => setAdminProConfigDraft((p) => ({ ...p, plan_name: e.target.value }))} />
                 <Input label="Narx matni" value={adminProConfigDraft.price_text} onChange={(e) => setAdminProConfigDraft((p) => ({ ...p, price_text: e.target.value }))} />
                 <Input label="Bepul startup limiti" type="number" value={adminProConfigDraft.startup_limit_free} onChange={(e) => setAdminProConfigDraft((p) => ({ ...p, startup_limit_free: Number(e.target.value || 1) }))} />
                 <div className="space-y-1.5">
@@ -2808,7 +2864,7 @@ const App = () => {
                 <Input label="Karta egasi (ism familya)" value={adminProConfigDraft.card_holder} onChange={(e) => setAdminProConfigDraft((p) => ({ ...p, card_holder: e.target.value }))} />
                 <Input label="Karta raqami" value={adminProConfigDraft.card_number} onChange={(e) => setAdminProConfigDraft((p) => ({ ...p, card_number: e.target.value }))} />
                 <Input label="Bank nomi" value={adminProConfigDraft.bank_name} onChange={(e) => setAdminProConfigDraft((p) => ({ ...p, bank_name: e.target.value }))} />
-                <Input label="Chek upload matni" value={adminProConfigDraft.receipt_note} onChange={(e) => setAdminProConfigDraft((p) => ({ ...p, receipt_note: e.target.value }))} />
+                <Input label="Chek yuklash matni" value={adminProConfigDraft.receipt_note} onChange={(e) => setAdminProConfigDraft((p) => ({ ...p, receipt_note: e.target.value }))} />
               </div>
               <Button onClick={handleSaveProConfig} className="h-11 px-7">Saqlash</Button>
             </div>
@@ -2826,7 +2882,7 @@ const App = () => {
                       <p className="text-[12px] text-gray-500">Karta egasi: {r.sender_full_name} | Karta: {r.sender_card_number}</p>
                       <p className="text-[11px] text-gray-400">{new Date(r.created_at).toLocaleString()}</p>
                     </div>
-                    <Badge>{r.status}</Badge>
+                    <Badge>{mapStatusText(r.status)}</Badge>
                   </div>
                   <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50">
                     <img src={r.receipt_image} alt="Chek rasmi" className="w-full max-h-[260px] object-contain" />
@@ -2860,13 +2916,13 @@ const App = () => {
         {adminTab === 'stats' && (
           <div className="grid grid-cols-2 md:grid-cols-7 gap-4 md:gap-6">
             {[
-              { val: stats.users, label: 'Userlar' },
+              { val: stats.users, label: 'Foydalanuvchilar' },
               { val: stats.startups, label: 'Startup' },
               { val: stats.pending_startups, label: 'Kutilmoqda' },
               { val: stats.join_requests, label: "So'rov" },
               { val: stats.notifications, label: 'Xabarnoma' },
-              { val: stats.pro_users || 0, label: 'Pro userlar' },
-              { val: stats.pending_pro_requests || 0, label: 'Pro kutish' }
+              { val: stats.pro_users || 0, label: 'Pro foydalanuvchilar' },
+              { val: stats.pending_pro_requests || 0, label: 'Kutilayotgan Pro' }
             ].map((s, i) => (
               <div key={i} className="bg-white border border-gray-100 rounded-xl p-4 md:p-6 text-center shadow-sm hover:border-black transition-all">
                 <p className="text-xl md:text-3xl font-extrabold italic mb-1">{s.val}</p>
@@ -2885,9 +2941,9 @@ const App = () => {
                   <p className="text-[10px] text-gray-400">{new Date(log.created_at).toLocaleString()}</p>
                 </div>
                 <p className="text-[12px] text-gray-600 mt-2">
-                  Entity: <span className="font-semibold">{log.entity_type}</span> / {log.entity_id}
+                  Obyekt: <span className="font-semibold">{log.entity_type}</span> / {log.entity_id}
                 </p>
-                <p className="text-[12px] text-gray-600">Actor: {log.actor_id}</p>
+                <p className="text-[12px] text-gray-600">Amal bajargan: {log.actor_id}</p>
               </div>
             ))}
             {auditLogs.length === 0 && <EmptyState icon="fa-list" title="Audit log bo'sh" />}
@@ -3037,11 +3093,6 @@ const App = () => {
                 <p className="text-[9px] uppercase tracking-[0.2em] font-bold text-slate-500 mt-1">{activeTabTitle}</p>
               </div>
               <div className="flex items-center gap-2">
-                {!currentUser && (
-                  <button onClick={() => openAuth('login')} className="h-10 px-3 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 text-[12px] font-bold">
-                    Kirish
-                  </button>
-                )}
                 {!isProUser && proEnabled && (
                   <button onClick={() => setShowProModal(true)} className="h-10 px-3 rounded-full border border-amber-200 bg-amber-50 text-amber-700 text-[12px] font-bold">
                     Pro
@@ -3049,7 +3100,7 @@ const App = () => {
                 )}
                 {currentUser?.role === 'admin' && (
                   <button onClick={() => navigateTo('admin')} className="h-10 px-3 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 text-[12px] font-bold">
-                    Admin
+                    Boshqaruv
                   </button>
                 )}
                 <button
@@ -3174,8 +3225,8 @@ const App = () => {
                 </div>
               )}
               <div className="space-y-4">
-                <Input required name="email" type="email" label="Email" icon="fa-at" placeholder="example@mail.com" />
-                <Input required name="password" type="password" label="Parol" icon="fa-lock" placeholder="••••••••" />
+                <Input required name="email" type="email" label="Elektron pochta" icon="fa-at" placeholder="namuna@mail.com" />
+                <Input required name="password" type="password" label="Parol" icon="fa-lock" placeholder="********" />
               </div>
               <Button type="submit" className="w-full h-12 md:h-12 mt-4 font-bold uppercase tracking-widest italic shadow-lg">Davom etish</Button>
             </form>
@@ -3272,7 +3323,7 @@ const App = () => {
                 <div key={r.id} className="border border-gray-100 rounded-xl p-3 bg-gray-50/70">
                   <div className="flex items-center justify-between">
                     <p className="text-[12px] font-semibold">{r.sender_full_name}</p>
-                    <Badge variant={r.status === 'approved' ? 'success' : r.status === 'rejected' ? 'danger' : 'default'}>{r.status}</Badge>
+                    <Badge variant={r.status === 'approved' ? 'success' : r.status === 'rejected' ? 'danger' : 'default'}>{mapStatusText(r.status)}</Badge>
                   </div>
                   <p className="text-[11px] text-gray-500 mt-1">{new Date(r.created_at).toLocaleString()}</p>
                   {r.admin_note && <p className="text-[12px] text-gray-600 mt-2">Izoh: {r.admin_note}</p>}
@@ -3294,13 +3345,13 @@ const App = () => {
             <div className="rounded-2xl overflow-hidden border border-gray-200">
               <div className="h-40 relative">
                 {viewedUser.banner ? (
-                  <img src={viewedUser.banner} className="absolute inset-0 w-full h-full object-cover" alt="Banner" />
+                  <img src={viewedUser.banner} className="absolute inset-0 w-full h-full object-cover" alt="Profil banneri" />
                 ) : (
                   <div className="absolute inset-0 bg-gradient-to-r from-slate-100 via-blue-50 to-cyan-50" />
                 )}
               </div>
               <div className="px-6 pb-6 -mt-10 flex flex-col md:flex-row md:items-end gap-4">
-                <img src={viewedUser.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(viewedUser.name || 'User')}`} className="w-20 h-20 rounded-2xl border-4 border-white shadow-lg object-cover" alt="Avatar" />
+                <img src={viewedUser.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(viewedUser.name || 'Foydalanuvchi')}`} className="w-20 h-20 rounded-2xl border-4 border-white shadow-lg object-cover" alt="Profil rasmi" />
                 <div className="flex-grow">
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="text-xl font-black">{viewedUser.name}</h3>
@@ -3321,7 +3372,7 @@ const App = () => {
             )}
 
             <div className="space-y-2">
-              <h4 className="text-[11px] uppercase tracking-widest font-bold text-gray-500">Bio</h4>
+              <h4 className="text-[11px] uppercase tracking-widest font-bold text-gray-500">Qisqacha ma'lumot</h4>
               <p className="text-[13px] text-gray-700">{viewedUser.bio || "Foydalanuvchi bio kiritmagan."}</p>
             </div>
 
@@ -3357,9 +3408,18 @@ const App = () => {
         .app-shell.theme-dark {
           --surface-1: #0b1220;
           --surface-2: #111827;
+          --card: #111c2f;
+          --card-soft: #0f1a2b;
+          --card-muted: #16243a;
+          --text-1: #ecf4ff;
+          --text-2: #c9d8ee;
+          --text-3: #98abc6;
+          --border-1: rgba(148, 163, 184, 0.28);
+          --border-2: rgba(71, 85, 105, 0.6);
+          color: var(--text-2);
           background:
-            radial-gradient(circle at 8% 8%, rgba(59, 130, 246, 0.18), transparent 42%),
-            radial-gradient(circle at 88% 12%, rgba(14, 165, 233, 0.16), transparent 36%),
+            radial-gradient(circle at 8% 8%, rgba(59, 130, 246, 0.2), transparent 42%),
+            radial-gradient(circle at 88% 12%, rgba(14, 165, 233, 0.18), transparent 36%),
             linear-gradient(180deg, var(--surface-1), var(--surface-2));
         }
 
@@ -3373,6 +3433,79 @@ const App = () => {
         .app-shell.theme-dark .ios-navbar {
           background: rgba(15, 23, 42, 0.78) !important;
           border-color: rgba(148, 163, 184, 0.28) !important;
+        }
+
+        .app-shell.theme-dark .ios-navbar button[class*="bg-blue-50"] {
+          background: #1a3358 !important;
+          color: #dbeafe !important;
+          border-color: #2a4a76 !important;
+        }
+
+        .app-shell.theme-dark .ios-navbar button:not([class*="bg-blue-50"]) {
+          color: #9eb3cf !important;
+        }
+
+        .app-shell.theme-dark .ios-navbar button:not([class*="bg-blue-50"]):hover {
+          background: rgba(30, 41, 59, 0.8) !important;
+        }
+
+        .app-shell.theme-dark [class*="bg-white"]:not([class*="bg-white/"]) {
+          background-color: var(--card) !important;
+        }
+
+        .app-shell.theme-dark [class*="bg-gray-50"],
+        .app-shell.theme-dark [class*="bg-gray-100"],
+        .app-shell.theme-dark [class*="bg-slate-50"],
+        .app-shell.theme-dark [class*="bg-slate-100"] {
+          background-color: var(--card-soft) !important;
+        }
+
+        .app-shell.theme-dark [class*="bg-amber-50"],
+        .app-shell.theme-dark [class*="bg-emerald-50"],
+        .app-shell.theme-dark [class*="bg-rose-50"],
+        .app-shell.theme-dark [class*="bg-blue-50"] {
+          background-color: var(--card-muted) !important;
+        }
+
+        .app-shell.theme-dark [class*="border-gray-"],
+        .app-shell.theme-dark [class*="border-slate-"] {
+          border-color: var(--border-2) !important;
+        }
+
+        .app-shell.theme-dark .text-black,
+        .app-shell.theme-dark .text-gray-900,
+        .app-shell.theme-dark [class*="text-slate-900"] {
+          color: var(--text-1) !important;
+        }
+
+        .app-shell.theme-dark .text-gray-800,
+        .app-shell.theme-dark .text-gray-700 {
+          color: var(--text-2) !important;
+        }
+
+        .app-shell.theme-dark .text-gray-600,
+        .app-shell.theme-dark .text-gray-500,
+        .app-shell.theme-dark .text-gray-400,
+        .app-shell.theme-dark [class*="text-slate-500"],
+        .app-shell.theme-dark [class*="text-slate-400"] {
+          color: var(--text-3) !important;
+        }
+
+        .app-shell.theme-dark input,
+        .app-shell.theme-dark textarea,
+        .app-shell.theme-dark select {
+          background-color: #0d1728 !important;
+          color: var(--text-1) !important;
+          border-color: var(--border-2) !important;
+        }
+
+        .app-shell.theme-dark input::placeholder,
+        .app-shell.theme-dark textarea::placeholder {
+          color: #7f96b5 !important;
+        }
+
+        .app-shell.theme-dark .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #3b4f6d;
         }
 
         .ios-topbar {

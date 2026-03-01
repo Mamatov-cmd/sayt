@@ -9,7 +9,7 @@ const request = async (path, options = {}) => {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `Request failed: ${res.status}`);
+    throw new Error(text || `So'rov bajarilmadi: ${res.status}`);
   }
   if (res.status === 204) return null;
   return res.json();

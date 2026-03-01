@@ -79,7 +79,7 @@ const mapStartup = (row) => {
     github_url: row.github_url || '',
     website_url: row.website_url || '',
     rejection_reason: row.rejection_reason || null,
-    segment: row.segment || 'IT Founder + Developer',
+    segment: row.segment || 'IT asoschi + dasturchi',
     lifecycle_status: row.lifecycle_status || 'live',
     success_fee_percent: row.success_fee_percent ?? 1.5,
     registry_notes: row.registry_notes || ''
@@ -493,7 +493,7 @@ const buildStartupAiRisk = async (startupId) => {
   }
   if (completionRate < 0.45 && tasks.length >= 4) {
     risk += 14;
-    signals.push({ type: 'delivery', level: 'high', text: `Task completion past: ${Math.round(completionRate * 100)}%.` });
+    signals.push({ type: 'delivery', level: 'high', text: `Vazifa bajarilish darajasi past: ${Math.round(completionRate * 100)}%.` });
   }
   if (oldOpenDecisions > 0) {
     risk += Math.min(16, oldOpenDecisions * 5);
@@ -501,11 +501,11 @@ const buildStartupAiRisk = async (startupId) => {
   }
   if (openCases.length > 0) {
     risk += Math.min(18, openCases.length * 6);
-    signals.push({ type: 'team', level: 'high', text: `Founder vote ochiq holatda (${openCases.length} ta).` });
+    signals.push({ type: 'team', level: 'high', text: `Asoschi ovozi ochiq holatda (${openCases.length} ta).` });
   }
   if (equity.length > 0 && (totalEquity < 99 || totalEquity > 101)) {
     risk += 10;
-    signals.push({ type: 'equity', level: 'medium', text: `Equity balanslashmagan (${totalEquity.toFixed(2)}%).` });
+    signals.push({ type: 'equity', level: 'medium', text: `Ulush balanslashmagan (${totalEquity.toFixed(2)}%).` });
   }
   if (maxShare > 70) {
     risk += 9;
@@ -574,7 +574,7 @@ app.put('/api/admin/pro/config', async (req, res) => {
   const body = req.body || {};
   const actorId = body.actor_id;
   const role = body.actor_role;
-  if (role !== 'admin') return res.status(403).send('Only admin can update pro config');
+  if (role !== 'admin') return res.status(403).send('Faqat admin Pro sozlamasini yangilay oladi');
 
   const now = nowIso();
   await run(
@@ -634,7 +634,7 @@ app.get('/api/pro/requests', async (req, res) => {
       );
     }
   } else {
-    return res.status(400).send('userId or role=admin required');
+    return res.status(400).send('userId yoki role=admin talab qilinadi');
   }
   res.json(rows.map(mapProPaymentRequest));
 });
@@ -642,23 +642,23 @@ app.get('/api/pro/requests', async (req, res) => {
 app.post('/api/pro/requests', async (req, res) => {
   const body = req.body || {};
   const userId = body.user_id;
-  if (!userId) return res.status(400).send('user_id required');
+  if (!userId) return res.status(400).send('user_id talab qilinadi');
   if (!body.sender_full_name || !body.sender_card_number || !body.receipt_image) {
-    return res.status(400).send('sender_full_name, sender_card_number, receipt_image required');
+    return res.status(400).send('sender_full_name, sender_card_number, receipt_image majburiy');
   }
 
   const config = await getPlatformConfig();
-  if (!config.pro_enabled) return res.status(400).send('Pro mode is currently disabled');
+  if (!config.pro_enabled) return res.status(400).send('Hozirda Pro rejim o'chirilgan');
 
   const user = await get('SELECT * FROM users WHERE id = ?', [userId]);
-  if (!user) return res.status(404).send('User not found');
-  if (user.is_pro === 1) return res.status(400).send('User already has Pro');
+  if (!user) return res.status(404).send('Foydalanuvchi topilmadi');
+  if (user.is_pro === 1) return res.status(400).send('Foydalanuvchi allaqachon Pro');
 
   const pending = await get(
     'SELECT * FROM pro_payment_requests WHERE user_id = ? AND status = "pending" ORDER BY created_at DESC LIMIT 1',
     [userId]
   );
-  if (pending) return res.status(409).send('Pending pro request already exists');
+  if (pending) return res.status(409).send('Kutilayotgan Pro so'rov allaqachon mavjud');
 
   const id = makeId('proreq');
   const createdAt = nowIso();
@@ -701,12 +701,12 @@ app.put('/api/pro/requests/:id/review', async (req, res) => {
   const body = req.body || {};
   const action = body.action;
   const reviewerRole = body.actor_role;
-  if (reviewerRole !== 'admin') return res.status(403).send('Only admin can review');
-  if (!['approve', 'reject'].includes(action)) return res.status(400).send('action must be approve or reject');
+  if (reviewerRole !== 'admin') return res.status(403).send('Faqat admin ko'rib chiqishi mumkin');
+  if (!['approve', 'reject'].includes(action)) return res.status(400).send('action approve yoki reject bo'lishi kerak');
 
   const existing = await get('SELECT * FROM pro_payment_requests WHERE id = ?', [requestId]);
-  if (!existing) return res.status(404).send('Pro request not found');
-  if (existing.status !== 'pending') return res.status(400).send('Request already reviewed');
+  if (!existing) return res.status(404).send('Pro so'rov topilmadi');
+  if (existing.status !== 'pending') return res.status(400).send('So'rov allaqachon ko'rib chiqilgan');
 
   const reviewedAt = nowIso();
   const nextStatus = action === 'approve' ? 'approved' : 'rejected';
@@ -772,18 +772,18 @@ app.get('/api/users', async (req, res) => {
 app.get('/api/users/:id', async (req, res) => {
   if (req.params.id === 'by-email') {
     const email = req.query.email;
-    if (!email) return res.status(400).send('Email required');
+    if (!email) return res.status(400).send('Elektron pochta talab qilinadi');
     const row = await get('SELECT * FROM users WHERE email = ?', [email]);
     return res.json(mapUser(row));
   }
   const row = await get('SELECT * FROM users WHERE id = ?', [req.params.id]);
-  if (!row) return res.status(404).send('User not found');
+  if (!row) return res.status(404).send('Foydalanuvchi topilmadi');
   res.json(mapUser(row));
 });
 
 app.get('/api/users/by-email', async (req, res) => {
   const email = req.query.email;
-  if (!email) return res.status(400).send('Email required');
+  if (!email) return res.status(400).send('Elektron pochta talab qilinadi');
   const row = await get('SELECT * FROM users WHERE email = ?', [email]);
   res.json(mapUser(row));
 });
@@ -822,7 +822,7 @@ app.post('/api/users', async (req, res) => {
 
 app.put('/api/users/:id', async (req, res) => {
   const { fields, values } = buildUpdate(req.body, ['skills', 'languages', 'tools']);
-  if (fields.length === 0) return res.status(400).send('No fields to update');
+  if (fields.length === 0) return res.status(400).send('Yangilash uchun maydon topilmadi');
   values.push(req.params.id);
   await run(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, values);
   const updated = await get('SELECT * FROM users WHERE id = ?', [req.params.id]);
@@ -831,7 +831,7 @@ app.put('/api/users/:id', async (req, res) => {
 
 app.put('/api/users/:id/role', async (req, res) => {
   const role = req.body?.role;
-  if (!role) return res.status(400).send('role required');
+  if (!role) return res.status(400).send('role talab qilinadi');
   await run('UPDATE users SET role = ? WHERE id = ?', [role, req.params.id]);
   const updated = await get('SELECT * FROM users WHERE id = ?', [req.params.id]);
   await logAction(req.body?.actor_id, 'update_role', 'user', req.params.id, { role });
@@ -902,8 +902,8 @@ app.post('/api/startups', async (req, res) => {
       const ownedCount = Number(ownedCountRow?.count || 0);
       if (ownedCount >= Number(settings.startup_limit_free || 1)) {
         return res.status(403).json({
-          error: 'Pro plan required',
-          message: `Free user can create only ${settings.startup_limit_free || 1} startup(s). Upgrade to Pro for unlimited startups.`
+          error: 'Pro reja talab qilinadi',
+          message: `Bepul foydalanuvchi faqat ${settings.startup_limit_free || 1} ta startup yarata oladi. Cheksiz startup uchun Pro ga o'ting.`
         });
       }
     }
@@ -957,7 +957,7 @@ app.post('/api/startups', async (req, res) => {
 
 app.put('/api/startups/:id', async (req, res) => {
   const { fields, values } = buildUpdate(req.body, ['kerakli_mutaxassislar', 'a_zolar', 'tasks']);
-  if (fields.length === 0) return res.status(400).send('No fields to update');
+  if (fields.length === 0) return res.status(400).send('Yangilash uchun maydon topilmadi');
   values.push(req.params.id);
   await run(`UPDATE startups SET ${fields.join(', ')} WHERE id = ?`, values);
   const updated = await get('SELECT * FROM startups WHERE id = ?', [req.params.id]);
@@ -966,7 +966,7 @@ app.put('/api/startups/:id', async (req, res) => {
 
 app.put('/api/startups/:id/status', async (req, res) => {
   const status = req.body?.status;
-  if (!status) return res.status(400).send('status required');
+  if (!status) return res.status(400).send('status talab qilinadi');
   await run('UPDATE startups SET status = ?, rejection_reason = ? WHERE id = ?', [
     status,
     req.body?.rejection_reason || null,
@@ -1034,7 +1034,7 @@ app.post('/api/join-requests', async (req, res) => {
 
 app.put('/api/join-requests/:id/status', async (req, res) => {
   const status = req.body?.status;
-  if (!status) return res.status(400).send('Status required');
+  if (!status) return res.status(400).send('status talab qilinadi');
   await run('UPDATE join_requests SET status = ? WHERE id = ?', [status, req.params.id]);
   const updated = await get('SELECT * FROM join_requests WHERE id = ?', [req.params.id]);
   res.json(mapJoinRequest(updated));
@@ -1085,7 +1085,7 @@ app.put('/api/notifications/:id/read', async (req, res) => {
 
 app.put('/api/notifications/mark-all-read', async (req, res) => {
   const userId = req.query.userId;
-  if (!userId) return res.status(400).send('userId required');
+  if (!userId) return res.status(400).send('userId talab qilinadi');
   await run('UPDATE notifications SET is_read = 1 WHERE user_id = ?', [userId]);
   res.status(204).end();
 });
@@ -1094,12 +1094,12 @@ app.put('/api/notifications/mark-all-read', async (req, res) => {
 app.get('/api/startups/:id/chat', async (req, res) => {
   const startupId = req.params.id;
   const userId = req.query.userId;
-  if (!userId) return res.status(400).send('userId required');
+  if (!userId) return res.status(400).send('userId talab qilinadi');
 
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
-  if (!isStartupMember(startup, userId)) return res.status(403).send('Only startup members can access chat');
+  if (!isStartupMember(startup, userId)) return res.status(403).send('Suhbatga faqat startup a'zolari kira oladi');
 
   const rows = await all(
     `SELECT * FROM startup_chat_messages WHERE startup_id = ? ORDER BY created_at ASC`,
@@ -1115,21 +1115,21 @@ app.post('/api/startups/:id/chat', async (req, res) => {
   const messageType = (req.body?.message_type || 'text').trim().toLowerCase();
   const fileName = (req.body?.file_name || '').trim();
   const fileUrl = req.body?.file_url || '';
-  if (!userId) return res.status(400).send('user_id required');
-  if (!content && !fileUrl) return res.status(400).send('content or file_url required');
-  if (!['text', 'image', 'file'].includes(messageType)) return res.status(400).send('Invalid message_type');
+  if (!userId) return res.status(400).send('user_id talab qilinadi');
+  if (!content && !fileUrl) return res.status(400).send('content yoki file_url talab qilinadi');
+  if (!['text', 'image', 'file'].includes(messageType)) return res.status(400).send('message_type noto'g'ri');
 
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
-  if (!isStartupMember(startup, userId)) return res.status(403).send('Only startup members can send chat');
+  if (!isStartupMember(startup, userId)) return res.status(403).send('Suhbatga xabarni faqat startup a'zolari yubora oladi');
 
   let senderName = 'Noma\'lum';
   if (userId === 'admin') {
     senderName = 'Admin';
   } else {
     const sender = await get('SELECT * FROM users WHERE id = ?', [userId]);
-    if (!sender) return res.status(404).send('Sender not found');
+    if (!sender) return res.status(404).send('Yuboruvchi topilmadi');
     senderName = sender.name || sender.id;
   }
 
@@ -1164,12 +1164,12 @@ app.post('/api/startups/:id/chat', async (req, res) => {
 app.get('/api/startups/:id/recommendations', async (req, res) => {
   const startupId = req.params.id;
   const userId = req.query.userId;
-  if (!userId) return res.status(400).send('userId required');
+  if (!userId) return res.status(400).send('userId talab qilinadi');
 
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
-  if (!isStartupMember(startup, userId)) return res.status(403).send('Only startup members can view recommendations');
+  if (!isStartupMember(startup, userId)) return res.status(403).send('Tavsiyalarni faqat startup a'zolari ko'ra oladi');
 
   const needed = (startup.kerakli_mutaxassislar || [])
     .map((item) => String(item || '').toLowerCase().trim())
@@ -1233,31 +1233,31 @@ app.post('/api/startups/:id/invitations', async (req, res) => {
   const inviterId = req.body?.inviter_id;
   const inviteeId = req.body?.invitee_id;
   const roleHint = (req.body?.role_hint || '').trim();
-  if (!inviterId || !inviteeId) return res.status(400).send('inviter_id and invitee_id required');
-  if (inviterId === inviteeId) return res.status(400).send('Cannot invite yourself');
+  if (!inviterId || !inviteeId) return res.status(400).send('inviter_id va invitee_id talab qilinadi');
+  if (inviterId === inviteeId) return res.status(400).send('O'zingizni taklif qila olmaysiz');
 
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
-  if (!isStartupMember(startup, inviterId)) return res.status(403).send('Only members can invite');
+  if (!isStartupMember(startup, inviterId)) return res.status(403).send('Taklif yuborish faqat a'zolarga ruxsat');
 
   const inviteeRow = await get('SELECT * FROM users WHERE id = ?', [inviteeId]);
-  if (!inviteeRow) return res.status(404).send('Invitee not found');
-  if (inviteeRow.banned === 1) return res.status(400).send('Invitee is banned');
-  if (isStartupMember(startup, inviteeId)) return res.status(409).send('User is already a member');
+  if (!inviteeRow) return res.status(404).send('Taklif qilinuvchi topilmadi');
+  if (inviteeRow.banned === 1) return res.status(400).send('Taklif qilinuvchi bloklangan');
+  if (isStartupMember(startup, inviteeId)) return res.status(409).send('Foydalanuvchi allaqachon a'zo');
 
   const existingPending = await get(
     `SELECT * FROM startup_invitations WHERE startup_id = ? AND invitee_id = ? AND status = 'pending'`,
     [startupId, inviteeId]
   );
-  if (existingPending) return res.status(409).send('Pending invitation already exists');
+  if (existingPending) return res.status(409).send("Kutilayotgan taklif allaqachon mavjud");
 
   let inviterName = 'Noma\'lum';
   if (inviterId === 'admin') {
     inviterName = 'Admin';
   } else {
     const inviter = await get('SELECT * FROM users WHERE id = ?', [inviterId]);
-    if (!inviter) return res.status(404).send('Inviter not found');
+    if (!inviter) return res.status(404).send('Taklif yuboruvchi topilmadi');
     inviterName = inviter.name || inviter.id;
   }
 
@@ -1311,7 +1311,7 @@ app.post('/api/startups/:id/invitations', async (req, res) => {
 
 app.get('/api/invitations', async (req, res) => {
   const userId = req.query.userId;
-  if (!userId) return res.status(400).send('userId required');
+  if (!userId) return res.status(400).send('userId talab qilinadi');
   const rows = await all(
     `SELECT * FROM startup_invitations WHERE invitee_id = ? ORDER BY created_at DESC`,
     [userId]
@@ -1324,16 +1324,16 @@ app.post('/api/invitations/:id/respond', async (req, res) => {
   const userId = req.body?.user_id;
   const action = req.body?.action;
   if (!userId || !['accept', 'reject'].includes(action)) {
-    return res.status(400).send('user_id and action(accept|reject) required');
+    return res.status(400).send('user_id va action(accept|reject) talab qilinadi');
   }
 
   const invitation = await get('SELECT * FROM startup_invitations WHERE id = ?', [invitationId]);
-  if (!invitation) return res.status(404).send('Invitation not found');
-  if (invitation.invitee_id !== userId) return res.status(403).send('Only invited user can respond');
-  if (invitation.status !== 'pending') return res.status(400).send('Invitation already handled');
+  if (!invitation) return res.status(404).send('Taklif topilmadi');
+  if (invitation.invitee_id !== userId) return res.status(403).send('Faqat taklif qilingan foydalanuvchi javob bera oladi');
+  if (invitation.status !== 'pending') return res.status(400).send('Taklif allaqachon ko'rib chiqilgan');
 
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [invitation.startup_id]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
 
   const now = nowIso();
@@ -1432,7 +1432,7 @@ app.post('/api/tasks', async (req, res) => {
 
 app.put('/api/tasks/:id/status', async (req, res) => {
   const status = req.body?.status;
-  if (!status) return res.status(400).send('Status required');
+  if (!status) return res.status(400).send('status talab qilinadi');
   await run('UPDATE tasks SET status = ? WHERE id = ?', [status, req.params.id]);
   const updated = await get('SELECT * FROM tasks WHERE id = ?', [req.params.id]);
   res.json(mapTask(updated));
@@ -1451,7 +1451,7 @@ app.get('/api/categories', async (req, res) => {
 
 app.post('/api/categories', async (req, res) => {
   const name = (req.body?.name || '').trim();
-  if (!name) return res.status(400).send('name required');
+  if (!name) return res.status(400).send('name talab qilinadi');
   await run('INSERT INTO categories (name, created_at) VALUES (?, ?)', [name, new Date().toISOString()]);
   const created = await get('SELECT * FROM categories WHERE name = ?', [name]);
   await logAction(req.body?.actor_id, 'create_category', 'category', String(created?.id), { name });
@@ -1484,7 +1484,7 @@ app.get('/api/audit-logs', async (req, res) => {
 app.get('/api/startups/:id/workspace', async (req, res) => {
   const startupId = req.params.id;
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
   const members = startup.a_zolar || [];
   const memberNameMap = Object.fromEntries(members.map((m) => [m.user_id, m.name]));
@@ -1625,7 +1625,7 @@ app.post('/api/startups/:id/activity', async (req, res) => {
   const startupId = req.params.id;
   const userId = req.body?.user_id;
   const activityType = (req.body?.activity_type || '').trim();
-  if (!userId || !activityType) return res.status(400).send('user_id and activity_type required');
+  if (!userId || !activityType) return res.status(400).send('user_id va activity_type talab qilinadi');
   await ensureWorkspace(startupId, userId);
   const id = makeId('act');
   const created_at = nowIso();
@@ -1657,24 +1657,24 @@ app.get('/api/startups/:id/reputation', async (req, res) => {
 
 app.get('/api/users/:id/reputation', async (req, res) => {
   const summary = await buildUserReputationSummary(req.params.id);
-  if (!summary) return res.status(404).send('User not found');
+  if (!summary) return res.status(404).send('Foydalanuvchi topilmadi');
   res.json(summary);
 });
 
 app.post('/api/startups/:id/reputation/reviews', async (req, res) => {
   const startupId = req.params.id;
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
   const members = startup.a_zolar || [];
   const memberIds = new Set(members.map((m) => m.user_id));
 
   const fromUserId = req.body?.from_user_id;
   const toUserId = req.body?.to_user_id;
-  if (!fromUserId || !toUserId) return res.status(400).send('from_user_id and to_user_id required');
-  if (fromUserId === toUserId) return res.status(400).send('Self-review is not allowed');
+  if (!fromUserId || !toUserId) return res.status(400).send('from_user_id va to_user_id talab qilinadi');
+  if (fromUserId === toUserId) return res.status(400).send('O'ziga baho berish mumkin emas');
   if (!memberIds.has(fromUserId) || !memberIds.has(toUserId)) {
-    return res.status(400).send('Only workspace members can review each other');
+    return res.status(400).send('Faqat ish maydoni a'zolari bir-birini baholay oladi');
   }
 
   const rating = clamp(Number(req.body?.rating || 0), 1, 5);
@@ -1746,13 +1746,13 @@ app.post('/api/startups/:id/decisions', async (req, res) => {
   const title = (req.body?.title || '').trim();
   const description = (req.body?.description || '').trim();
   const proposerId = req.body?.proposer_id;
-  if (!title || !proposerId) return res.status(400).send('title and proposer_id required');
+  if (!title || !proposerId) return res.status(400).send('title va proposer_id talab qilinadi');
 
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
   const memberIds = new Set((startup.a_zolar || []).map((m) => m.user_id));
-  if (!memberIds.has(proposerId)) return res.status(403).send('Only members can create decisions');
+  if (!memberIds.has(proposerId)) return res.status(403).send('Qaror yaratish faqat a'zolarga ruxsat');
 
   const id = makeId('dec');
   const created_at = nowIso();
@@ -1785,18 +1785,18 @@ app.post('/api/decisions/:id/vote', async (req, res) => {
   const voterId = req.body?.voter_id;
   const vote = req.body?.vote;
   if (!voterId || !['approve', 'reject'].includes(vote)) {
-    return res.status(400).send('voter_id and valid vote required');
+    return res.status(400).send('voter_id va to'g'ri vote talab qilinadi');
   }
 
   const decision = await get('SELECT * FROM workspace_decisions WHERE id = ?', [decisionId]);
-  if (!decision) return res.status(404).send('Decision not found');
-  if (decision.status !== 'open') return res.status(400).send('Decision already resolved');
+  if (!decision) return res.status(404).send('Qaror topilmadi');
+  if (decision.status !== 'open') return res.status(400).send('Qaror allaqachon yakunlangan');
 
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [decision.startup_id]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
   const memberIds = new Set((startup.a_zolar || []).map((m) => m.user_id));
-  if (!memberIds.has(voterId)) return res.status(403).send('Only members can vote');
+  if (!memberIds.has(voterId)) return res.status(403).send('Faqat a'zolar ovoz bera oladi');
 
   const existing = await get('SELECT * FROM decision_votes WHERE decision_id = ? AND voter_id = ?', [decisionId, voterId]);
   if (existing) {
@@ -1855,16 +1855,16 @@ app.post('/api/startups/:id/member-votes', async (req, res) => {
   const reason = (req.body?.reason || '').trim();
   const proposerId = req.body?.proposer_id;
   if (!targetUserId || !reason || !proposerId) {
-    return res.status(400).send('target_user_id, reason, proposer_id required');
+    return res.status(400).send('target_user_id, reason, proposer_id talab qilinadi');
   }
 
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
   const members = startup.a_zolar || [];
   const memberIds = new Set(members.map((m) => m.user_id));
   if (!memberIds.has(proposerId) || !memberIds.has(targetUserId)) {
-    return res.status(400).send('Both proposer and target must be startup members');
+    return res.status(400).send('Taklif beruvchi ham, nomzod ham startup a'zosi bo'lishi kerak');
   }
 
   const id = makeId('mvc');
@@ -1898,20 +1898,20 @@ app.post('/api/member-votes/:id/cast', async (req, res) => {
   const voterId = req.body?.voter_id;
   const vote = req.body?.vote;
   if (!voterId || !['keep', 'remove'].includes(vote)) {
-    return res.status(400).send('voter_id and valid vote required');
+    return res.status(400).send('voter_id va to'g'ri vote talab qilinadi');
   }
 
   const voteCase = await get('SELECT * FROM member_vote_cases WHERE id = ?', [caseId]);
-  if (!voteCase) return res.status(404).send('Vote case not found');
-  if (voteCase.status !== 'open') return res.status(400).send('Vote case already resolved');
+  if (!voteCase) return res.status(404).send('Ovoz holati topilmadi');
+  if (voteCase.status !== 'open') return res.status(400).send('Ovoz holati allaqachon yakunlangan');
 
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [voteCase.startup_id]);
-  if (!startupRow) return res.status(404).send('Startup not found');
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
   const startup = mapStartup(startupRow);
   const members = startup.a_zolar || [];
   const eligibleVoters = members.filter((m) => m.user_id !== voteCase.target_user_id);
   const eligibleIds = new Set(eligibleVoters.map((m) => m.user_id));
-  if (!eligibleIds.has(voterId)) return res.status(403).send('Only eligible members can vote');
+  if (!eligibleIds.has(voterId)) return res.status(403).send('Faqat mos a'zolar ovoz bera oladi');
 
   const existing = await get('SELECT * FROM member_vote_ballots WHERE case_id = ? AND voter_id = ?', [caseId, voterId]);
   if (existing) {
@@ -1982,7 +1982,7 @@ app.post('/api/startups/:id/equity', async (req, res) => {
   const startupId = req.params.id;
   const userId = req.body?.user_id;
   const share = Number(req.body?.share_percent);
-  if (!userId || !Number.isFinite(share)) return res.status(400).send('user_id and share_percent required');
+  if (!userId || !Number.isFinite(share)) return res.status(400).send('user_id va share_percent talab qilinadi');
 
   const existing = await get(
     `SELECT * FROM equity_allocations WHERE startup_id = ? AND user_id = ? AND status != 'archived'`,
@@ -2033,13 +2033,13 @@ app.post('/api/startups/:id/equity', async (req, res) => {
 app.put('/api/equity/:id', async (req, res) => {
   const id = req.params.id;
   const { fields, values } = buildUpdate(req.body);
-  if (fields.length === 0) return res.status(400).send('No fields to update');
+  if (fields.length === 0) return res.status(400).send('Yangilash uchun maydon topilmadi');
   fields.push('updated_at = ?');
   values.push(nowIso());
   values.push(id);
   await run(`UPDATE equity_allocations SET ${fields.join(', ')} WHERE id = ?`, values);
   const updated = await get('SELECT * FROM equity_allocations WHERE id = ?', [id]);
-  if (!updated) return res.status(404).send('Equity record not found');
+  if (!updated) return res.status(404).send('Ulush yozuvi topilmadi');
   res.json(updated);
 });
 
@@ -2063,7 +2063,7 @@ app.post('/api/startups/:id/agreements', async (req, res) => {
   const startupId = req.params.id;
   const title = (req.body?.title || '').trim();
   const body = (req.body?.body || '').trim();
-  if (!title || !body) return res.status(400).send('title and body required');
+  if (!title || !body) return res.status(400).send('title va body talab qilinadi');
   const id = makeId('agr');
   const timestamp = nowIso();
   await run(
@@ -2089,13 +2089,13 @@ app.put('/api/agreements/:id', async (req, res) => {
   const payload = { ...req.body };
   if (payload.signed_by !== undefined) payload.signed_by = JSON.stringify(payload.signed_by || []);
   const { fields, values } = buildUpdate(payload);
-  if (fields.length === 0) return res.status(400).send('No fields to update');
+  if (fields.length === 0) return res.status(400).send('Yangilash uchun maydon topilmadi');
   fields.push('updated_at = ?');
   values.push(nowIso());
   values.push(id);
   await run(`UPDATE safekeeping_agreements SET ${fields.join(', ')} WHERE id = ?`, values);
   const updated = await get('SELECT * FROM safekeeping_agreements WHERE id = ?', [id]);
-  if (!updated) return res.status(404).send('Agreement not found');
+  if (!updated) return res.status(404).send('Kelishuv topilmadi');
   res.json({ ...updated, signed_by: parseJson(updated.signed_by, []) });
 });
 
@@ -2111,7 +2111,7 @@ app.post('/api/startups/:id/investor-intros', async (req, res) => {
   const startupId = req.params.id;
   const investorName = (req.body?.investor_name || '').trim();
   const introducedBy = req.body?.introduced_by;
-  if (!investorName || !introducedBy) return res.status(400).send('investor_name and introduced_by required');
+  if (!investorName || !introducedBy) return res.status(400).send('investor_name va introduced_by talab qilinadi');
   const id = makeId('inv');
   await run(
     `INSERT INTO investor_intros (
@@ -2136,11 +2136,11 @@ app.post('/api/startups/:id/investor-intros', async (req, res) => {
 app.put('/api/investor-intros/:id', async (req, res) => {
   const id = req.params.id;
   const { fields, values } = buildUpdate(req.body);
-  if (fields.length === 0) return res.status(400).send('No fields to update');
+  if (fields.length === 0) return res.status(400).send('Yangilash uchun maydon topilmadi');
   values.push(id);
   await run(`UPDATE investor_intros SET ${fields.join(', ')} WHERE id = ?`, values);
   const updated = await get('SELECT * FROM investor_intros WHERE id = ?', [id]);
-  if (!updated) return res.status(404).send('Investor intro not found');
+  if (!updated) return res.status(404).send('Investor yozuvi topilmadi');
   res.json({ ...updated, amount: Number(updated.amount || 0) });
 });
 
@@ -2171,7 +2171,7 @@ app.put('/api/startups/:id/registry', async (req, res) => {
 // AI Decision Engine
 app.get('/api/startups/:id/ai-risk', async (req, res) => {
   const report = await buildStartupAiRisk(req.params.id);
-  if (!report) return res.status(404).send('Startup not found');
+  if (!report) return res.status(404).send('Startup topilmadi');
   res.json(report);
 });
 
@@ -2180,7 +2180,7 @@ if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
   app.get('*', (req, res) => {
     if (req.path.startsWith('/api')) {
-      return res.status(404).json({ error: 'Not found' });
+      return res.status(404).json({ error: 'Topilmadi' });
     }
     res.sendFile(path.join(distPath, 'index.html'));
   });
@@ -2194,3 +2194,4 @@ const start = async () => {
 };
 
 start();
+
