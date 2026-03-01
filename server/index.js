@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
 import { init, run, get, all } from './db.js';
 
 const app = express();
@@ -467,6 +469,17 @@ app.get('/api/audit-logs', async (req, res) => {
     created_at: r.created_at
   })));
 });
+
+const distPath = path.join(process.cwd(), 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req, res) => {
+    if (req.path.startsWith('/api')) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
 
 const start = async () => {
   await init();
