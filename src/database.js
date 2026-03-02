@@ -50,6 +50,20 @@ export const dbOperations = {
     });
   },
 
+  async uploadUserCv(userId, payload) {
+    return request(`/users/${userId}/cv`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+
+  async deleteUserCv(userId, actorId, actorRole = '') {
+    const params = new URLSearchParams();
+    params.set('actor_id', actorId);
+    if (actorRole) params.set('actor_role', actorRole);
+    return request(`/users/${userId}/cv?${params.toString()}`, { method: 'DELETE' });
+  },
+
   async getUserById(userId) {
     return request(`/users/${userId}`);
   },
@@ -90,6 +104,10 @@ export const dbOperations = {
 
   async getStartups() {
     return request('/startups');
+  },
+
+  async getStartupTemplates() {
+    return request('/startup-templates');
   },
 
   async updateStartup(startupId, updates) {
@@ -167,15 +185,38 @@ export const dbOperations = {
     });
   },
 
-  async updateTaskStatus(taskId, status) {
+  async getStartupTasks(startupId, { userId, status = '', q = '', due = '', page = 1, limit = 40 } = {}) {
+    const params = new URLSearchParams();
+    if (userId) params.set('userId', userId);
+    if (status) params.set('status', status);
+    if (q) params.set('q', q);
+    if (due) params.set('due', due);
+    params.set('page', String(page));
+    params.set('limit', String(limit));
+    return request(`/startups/${startupId}/tasks?${params.toString()}`);
+  },
+
+  async updateTaskStatus(taskId, status, actorId = '', actualHours = null) {
     return request(`/tasks/${taskId}/status`, {
       method: 'PUT',
-      body: JSON.stringify({ status })
+      body: JSON.stringify({
+        status,
+        actor_id: actorId || undefined,
+        actual_hours: actualHours ?? undefined
+      })
     });
   },
 
-  async deleteTask(taskId) {
-    return request(`/tasks/${taskId}`, { method: 'DELETE' });
+  async updateTask(taskId, updates) {
+    return request(`/tasks/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates)
+    });
+  },
+
+  async deleteTask(taskId, actorId = '') {
+    const query = actorId ? `?actor_id=${encodeURIComponent(actorId)}` : '';
+    return request(`/tasks/${taskId}${query}`, { method: 'DELETE' });
   },
 
   // Categories
@@ -208,6 +249,10 @@ export const dbOperations = {
   // Workspace snapshot
   async getStartupWorkspace(startupId) {
     return request(`/startups/${startupId}/workspace`);
+  },
+
+  async getStartupCalendar(startupId, userId) {
+    return request(`/startups/${startupId}/calendar?userId=${encodeURIComponent(userId)}`);
   },
 
   async logWorkspaceActivity(startupId, activity) {

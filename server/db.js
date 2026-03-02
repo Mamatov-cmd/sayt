@@ -473,7 +473,12 @@ const ensureDefaults = async () => {
           is_pro: 1,
           pro_status: 'pro',
           pro_updated_at: now,
-          banned: 0
+          banned: 0,
+          cv_data: adminById.cv_data || '',
+          cv_file_name: adminById.cv_file_name || '',
+          cv_mime: adminById.cv_mime || '',
+          cv_size: Number(adminById.cv_size || 0),
+          cv_updated_at: adminById.cv_updated_at || null
         }
       }
     );
@@ -489,7 +494,12 @@ const ensureDefaults = async () => {
             is_pro: 1,
             pro_status: 'pro',
             pro_updated_at: now,
-            banned: 0
+            banned: 0,
+            cv_data: adminByEmail.cv_data || '',
+            cv_file_name: adminByEmail.cv_file_name || '',
+            cv_mime: adminByEmail.cv_mime || '',
+            cv_size: Number(adminByEmail.cv_size || 0),
+            cv_updated_at: adminByEmail.cv_updated_at || null
           }
         }
       );
@@ -512,7 +522,12 @@ const ensureDefaults = async () => {
         banned: 0,
         is_pro: 1,
         pro_status: 'pro',
-        pro_updated_at: now
+        pro_updated_at: now,
+        cv_data: '',
+        cv_file_name: '',
+        cv_mime: '',
+        cv_size: 0,
+        cv_updated_at: null
       });
     }
   }

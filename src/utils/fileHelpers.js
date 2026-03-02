@@ -62,6 +62,47 @@ export const validateImageFile = (file) => {
 };
 
 /**
+ * CV faylini tekshirish (PDF, DOC, DOCX)
+ * @param {File} file - Tekshiriladigan fayl
+ * @returns {Object} {valid: boolean, error?: string}
+ */
+export const validateCvFile = (file) => {
+  const validTypes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ];
+  const validExt = ['pdf', 'doc', 'docx'];
+  const maxSize = 10 * 1024 * 1024; // 10MB
+
+  const extension = getFileExtension(file?.name || '');
+  const typeOk = validTypes.includes(file?.type) || validExt.includes(extension);
+  if (!typeOk) {
+    return {
+      valid: false,
+      error: "Faqat CV fayllar yuklanadi: PDF, DOC, DOCX"
+    };
+  }
+
+  if (Number(file?.size || 0) > maxSize) {
+    const sizeMB = ((Number(file.size || 0)) / (1024 * 1024)).toFixed(2);
+    return {
+      valid: false,
+      error: `Fayl hajmi ${sizeMB}MB. Maksimal 10MB bo'lishi kerak`
+    };
+  }
+
+  if (String(file?.name || '').length > 160) {
+    return {
+      valid: false,
+      error: 'Fayl nomi juda uzun'
+    };
+  }
+
+  return { valid: true };
+};
+
+/**
  * Fayl hajmini formatlash
  * @param {Number} bytes - Baytlarda hajm
  * @returns {String} Formatlangan hajm (KB, MB)
@@ -196,6 +237,7 @@ export const blobToFile = (blob, filename) => {
 export default {
   convertToBase64,
   validateImageFile,
+  validateCvFile,
   formatFileSize,
   compressImage,
   getFileExtension,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { getAIMentorResponse } from './services/geminiService';
-import { convertToBase64, validateImageFile } from './utils/fileHelpers';
+import { convertToBase64, validateImageFile, validateCvFile, formatFileSize } from './utils/fileHelpers';
 import { initDatabase, dbOperations, saveDatabase } from './database';
 import Logo from './r.png';
 
@@ -21,6 +21,62 @@ const DEFAULT_CATEGORIES = [
   'Boshqa'
 ];
 const URL_REGEX = /(https?:\/\/[^\s]+)/g;
+const FALLBACK_STARTUP_TEMPLATES = [
+  {
+    key: 'it_mvp',
+    name: 'IT MVP',
+    segment: 'IT asoschisi + dasturchi',
+    description: 'Tez MVP chiqish uchun bazaviy texnik template.',
+    specialists: ['Frontend', 'Backend', 'UI/UX', 'QA'],
+    default_tasks: []
+  },
+  {
+    key: 'saas_b2b',
+    name: 'SaaS B2B',
+    segment: 'SaaS',
+    description: 'B2B SaaS product va sales pipeline template.',
+    specialists: ['Product manager', 'Backend', 'Frontend', 'Sotuv'],
+    default_tasks: []
+  },
+  {
+    key: 'ai_product',
+    name: 'AI Mahsulot',
+    segment: "Sun'iy intellekt / ML",
+    description: 'AI mahsulot uchun data va model ish jarayoni template.',
+    specialists: ['ML muhandis', 'Backend', 'Frontend', 'Prompt muhandis'],
+    default_tasks: []
+  }
+];
+
+const EMPTY_TASK_DRAFT = {
+  title: '',
+  description: '',
+  assigned_to_id: '',
+  deadline: '',
+  priority: 'medium',
+  estimate_hours: '',
+  actual_hours: '',
+  calendar_tag: 'backlog'
+};
+
+const toDateStart = (value = new Date()) => {
+  const d = new Date(value);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const getTaskDeadlineState = (task) => {
+  if (!task?.deadline) return 'none';
+  const deadline = new Date(task.deadline);
+  if (Number.isNaN(deadline.getTime())) return 'none';
+  const today = toDateStart(new Date());
+  const dl = toDateStart(deadline);
+  if (task.status !== 'done' && dl < today) return 'overdue';
+  if (dl.getTime() === today.getTime()) return 'today';
+  const weekEnd = new Date(today.getTime() + 6 * 24 * 60 * 60 * 1000);
+  if (dl <= weekEnd) return 'week';
+  return 'future';
+};
 
 // --- REUSABLE UI COMPONENTS ---
 const Badge = ({ children, variant = 'default', size = 'sm', className = "" }) => {
@@ -182,6 +238,13 @@ const App = () => {
   const [aiLoading, setAiLoading] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState('vazifalar');
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [startupTemplates, setStartupTemplates] = useState(FALLBACK_STARTUP_TEMPLATES);
+  const [selectedTemplateKey, setSelectedTemplateKey] = useState(FALLBACK_STARTUP_TEMPLATES[0].key);
+  const [startupSpecialistsInput, setStartupSpecialistsInput] = useState('');
+  const [taskDraft, setTaskDraft] = useState(EMPTY_TASK_DRAFT);
+  const [taskFilter, setTaskFilter] = useState('all');
+  const [taskSearch, setTaskSearch] = useState('');
+  const [startupCalendar, setStartupCalendar] = useState(null);
   const [adminTab, setAdminTab] = useState('moderation');
   const [adminStats, setAdminStats] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
@@ -283,6 +346,11 @@ const App = () => {
       .filter(Boolean);
   };
 
+  const activeTemplate = useMemo(() => {
+    if (!Array.isArray(startupTemplates) || startupTemplates.length === 0) return null;
+    return startupTemplates.find((template) => template.key === selectedTemplateKey) || startupTemplates[0];
+  }, [startupTemplates, selectedTemplateKey]);
+
   const openEditProfileModal = () => {
     if (!currentUser) return;
     setEditedUser(currentUser);
@@ -313,6 +381,11 @@ const App = () => {
     banner: '',
     bio: '',
     portfolio_url: '',
+    cv_data: '',
+    cv_file_name: '',
+    cv_mime: '',
+    cv_size: 0,
+    cv_updated_at: null,
     is_pro: true,
     pro_status: 'pro',
     pro_updated_at: new Date().toISOString()
@@ -326,11 +399,12 @@ const App = () => {
       await initDatabase();
       
       // Load data from SQLite
-      const [usersData, startupsData, requestsData, proCfg] = await Promise.all([
+      const [usersData, startupsData, requestsData, proCfg, templateRows] = await Promise.all([
         dbOperations.getUsers(),
         dbOperations.getStartups(),
         dbOperations.getJoinRequests(),
-        dbOperations.getProConfig().catch(() => null)
+        dbOperations.getProConfig().catch(() => null),
+        dbOperations.getStartupTemplates().catch(() => FALLBACK_STARTUP_TEMPLATES)
       ]);
 
       try {
@@ -345,6 +419,14 @@ const App = () => {
       setAllUsers(usersData);
       setStartups(startupsData);
       setJoinRequests(requestsData);
+      if (Array.isArray(templateRows) && templateRows.length > 0) {
+        setStartupTemplates(templateRows);
+        if (!templateRows.some((t) => t.key === selectedTemplateKey)) {
+          setSelectedTemplateKey(templateRows[0].key);
+        }
+      } else {
+        setStartupTemplates(FALLBACK_STARTUP_TEMPLATES);
+      }
       if (proCfg) {
         setProConfig(proCfg);
         setAdminProConfigDraft(proCfg);
@@ -400,12 +482,28 @@ const App = () => {
         startupSnapshot.egasi_id === currentUser.id ||
         startupSnapshot.a_zolar.some((m) => m.user_id === currentUser.id)
       );
-      const [workspace, chatRows, recRows] = await Promise.all([
+      const [workspace, chatRows, recRows, calendarData] = await Promise.all([
         dbOperations.getStartupWorkspace(startupId),
         canLoadMemberData ? dbOperations.getStartupChat(startupId, currentUser.id).catch(() => []) : Promise.resolve([]),
-        canLoadMemberData ? dbOperations.getStartupRecommendations(startupId, currentUser.id).catch(() => []) : Promise.resolve([])
+        canLoadMemberData ? dbOperations.getStartupRecommendations(startupId, currentUser.id).catch(() => []) : Promise.resolve([]),
+        canLoadMemberData ? dbOperations.getStartupCalendar(startupId, currentUser.id).catch(() => null) : Promise.resolve(null)
       ]);
       setWorkspaceContext(workspace);
+      if (Array.isArray(workspace?.tasks)) {
+        setStartups((prev) => prev.map((item) => (
+          item.id === startupId
+            ? {
+              ...item,
+              tasks: workspace.tasks,
+              lifecycle_status: workspace?.startup?.lifecycle_status || item.lifecycle_status,
+              success_fee_percent: workspace?.startup?.success_fee_percent ?? item.success_fee_percent,
+              registry_notes: workspace?.startup?.registry_notes ?? item.registry_notes,
+              template_key: workspace?.startup?.template_key || item.template_key,
+              template_name: workspace?.startup?.template_name || item.template_name
+            }
+            : item
+        )));
+      }
       setRegistryDraft({
         lifecycle_status: workspace?.startup?.lifecycle_status || 'live',
         success_fee_percent: workspace?.startup?.success_fee_percent ?? 1.5,
@@ -414,6 +512,7 @@ const App = () => {
       setReviewDraft((prev) => ({ ...prev, to_user_id: '' }));
       setStartupChatMessages(Array.isArray(chatRows) ? chatRows : []);
       setMemberRecommendations(Array.isArray(recRows) ? recRows : []);
+      setStartupCalendar(calendarData);
       if (currentUser && currentUser.role !== 'admin') {
         const invites = await dbOperations.getInvitations(currentUser.id).catch(() => []);
         setPendingInvitations(Array.isArray(invites) ? invites.filter((i) => i.status === 'pending') : []);
@@ -423,10 +522,25 @@ const App = () => {
       setWorkspaceContext(null);
       setStartupChatMessages([]);
       setMemberRecommendations([]);
+      setStartupCalendar(null);
     } finally {
       setWorkspaceLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!activeTemplate) return;
+    setStartupSpecialistsInput((activeTemplate.specialists || []).join(', '));
+  }, [activeTemplate?.key]);
+
+  useEffect(() => {
+    setTaskDraft({
+      ...EMPTY_TASK_DRAFT,
+      assigned_to_id: currentUser?.id || ''
+    });
+    setTaskFilter('all');
+    setTaskSearch('');
+  }, [selectedStartupId, currentUser?.id]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -639,6 +753,11 @@ const App = () => {
         tools: [],
         avatar: tempFileBase64 || `https://ui-avatars.com/api/?name=${encodeURIComponent(fd.get('name'))}&background=111&color=fff`,
         banner: '',
+        cv_data: '',
+        cv_file_name: '',
+        cv_mime: '',
+        cv_size: 0,
+        cv_updated_at: null,
         is_pro: false,
         pro_status: 'free'
       };
@@ -672,6 +791,58 @@ const App = () => {
     const base64 = await convertToBase64(file);
     setTempBannerBase64(base64);
     setEditedUser((prev) => ({ ...prev, banner: base64 }));
+  };
+
+  const handleCvFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const validation = validateCvFile(file);
+    if (!validation.valid) return alert(validation.error);
+    const base64 = await convertToBase64(file);
+    const ext = String(file.name || '').split('.').pop()?.toLowerCase();
+    const mimeByExt = {
+      pdf: 'application/pdf',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    };
+    const detectedMime = file.type || mimeByExt[ext] || 'application/pdf';
+    setEditedUser((prev) => ({
+      ...prev,
+      cv_data: base64,
+      cv_file_name: file.name,
+      cv_mime: detectedMime,
+      cv_size: Number(file.size || 0),
+      cv_updated_at: new Date().toISOString()
+    }));
+  };
+
+  const handleRemoveCv = () => {
+    setEditedUser((prev) => ({
+      ...prev,
+      cv_data: '',
+      cv_file_name: '',
+      cv_mime: '',
+      cv_size: 0,
+      cv_updated_at: null
+    }));
+  };
+
+  const handleOpenCv = (user) => {
+    if (!user?.cv_data) return;
+    const link = document.createElement('a');
+    link.href = user.cv_data;
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.click();
+  };
+
+  const handleDownloadCv = (user) => {
+    if (!user?.cv_data) return;
+    const link = document.createElement('a');
+    link.href = user.cv_data;
+    link.download = user.cv_file_name || 'cv';
+    link.rel = 'noreferrer';
+    link.click();
   };
 
   const handleProReceiptChange = async (e) => {
@@ -955,12 +1126,20 @@ const App = () => {
       return alert(`Bepul rejimda faqat ${freeStartupLimit} ta startup yaratish mumkin.`);
     }
     const fd = new FormData(e.currentTarget);
+    const selectedTemplate = startupTemplates.find((template) => template.key === (fd.get('template_key') || selectedTemplateKey)) || activeTemplate;
+    const specialistsRaw = String(fd.get('specialists') || '').trim();
+    const specialists = specialistsRaw
+      ? parseSkillsInput(specialistsRaw)
+      : (selectedTemplate?.specialists || []);
+    if (specialists.length === 0) {
+      return alert("Kerakli mutaxassislarni kiriting.");
+    }
     const s = {
       id: `s_${Date.now()}`,
       nomi: fd.get('nomi'),
       tavsif: fd.get('tavsif'),
       category: fd.get('category'),
-      kerakli_mutaxassislar: fd.get('specialists').split(',').map(m => m.trim()),
+      kerakli_mutaxassislar: specialists,
       logo: tempFileBase64 || 'https://via.placeholder.com/150/111/fff?text=Loyiha',
       egasi_id: currentUser.id,
       egasi_name: currentUser.name,
@@ -971,14 +1150,18 @@ const App = () => {
       views: 0,
       github_url: fd.get('github_url') || '',
       website_url: fd.get('website_url') || '',
+      template_key: selectedTemplate?.key || '',
+      template_name: selectedTemplate?.name || '',
+      segment: selectedTemplate?.segment || 'IT asoschisi + dasturchi',
       lifecycle_status: 'live',
       success_fee_percent: 1.5,
       registry_notes: ''
     };
     
     try {
-      await dbOperations.createStartup(s);
-      setStartups(prev => [s, ...prev]);
+      const createdStartup = await dbOperations.createStartup(s);
+      setStartups(prev => [createdStartup, ...prev]);
+      await addNotification('admin', 'Yangi ariza', `"${createdStartup.nomi}" loyihasi moderatsiya uchun yuborildi.`, 'info');
     } catch (error) {
       const message = String(error?.message || '');
       if (message.toLowerCase().includes('pro')) {
@@ -988,21 +1171,64 @@ const App = () => {
     }
     
     navigateTo('my-projects');
-    await addNotification('admin', 'Yangi ariza', `"${s.nomi}" loyihasi moderatsiya uchun yuborildi.`, 'info');
     setTempFileBase64(null);
+    setStartupSpecialistsInput((selectedTemplate?.specialists || []).join(', '));
     alert('Loyiha muvaffaqiyatli yaratildi! Moderatsiyadan o\'tishini kuting.');
   };
 
   const handleUpdateProfile = async () => {
     if (!currentUser) return;
-    const updatedUser = {
-      ...currentUser,
-      ...editedUser,
+    const profileUpdates = {
+      name: String(editedUser.name ?? currentUser.name ?? '').trim(),
+      phone: String(editedUser.phone ?? currentUser.phone ?? '').trim(),
+      bio: String(editedUser.bio ?? currentUser.bio ?? ''),
+      avatar: editedUser.avatar ?? currentUser.avatar ?? '',
+      banner: editedUser.banner ?? currentUser.banner ?? '',
+      portfolio_url: String(editedUser.portfolio_url ?? currentUser.portfolio_url ?? '').trim(),
       skills: parseSkillsInput(editedSkillsText)
     };
+    if (!profileUpdates.name) {
+      return alert("Ism bo'sh bo'lmasligi kerak.");
+    }
+
+    const currentCv = {
+      cv_data: String(currentUser.cv_data || ''),
+      cv_file_name: String(currentUser.cv_file_name || ''),
+      cv_mime: String(currentUser.cv_mime || ''),
+      cv_size: Number(currentUser.cv_size || 0)
+    };
+    const nextCv = {
+      cv_data: String(editedUser.cv_data ?? currentUser.cv_data ?? ''),
+      cv_file_name: String(editedUser.cv_file_name ?? currentUser.cv_file_name ?? ''),
+      cv_mime: String(editedUser.cv_mime ?? currentUser.cv_mime ?? ''),
+      cv_size: Number(editedUser.cv_size ?? currentUser.cv_size ?? 0)
+    };
+    const cvChanged =
+      nextCv.cv_data !== currentCv.cv_data ||
+      nextCv.cv_file_name !== currentCv.cv_file_name ||
+      nextCv.cv_mime !== currentCv.cv_mime ||
+      nextCv.cv_size !== currentCv.cv_size;
+
     try {
-      const savedUser = await dbOperations.updateUser(currentUser.id, updatedUser);
+      let savedUser = await dbOperations.updateUser(currentUser.id, profileUpdates);
       if (!savedUser) throw new Error('Profil saqlanmadi');
+
+      if (cvChanged) {
+        if (nextCv.cv_data) {
+          savedUser = await dbOperations.uploadUserCv(currentUser.id, {
+            actor_id: currentUser.id,
+            actor_role: currentUser.role || '',
+            ...nextCv
+          });
+        } else if (currentCv.cv_data) {
+          savedUser = await dbOperations.deleteUserCv(
+            currentUser.id,
+            currentUser.id,
+            currentUser.role || ''
+          );
+        }
+      }
+
       setAllUsers(prev => prev.map(u => u.id === currentUser.id ? savedUser : u));
       setCurrentUser(savedUser);
 
@@ -1032,85 +1258,68 @@ const App = () => {
   };
 
   const handleAddTask = async (startupId) => {
-    const title = prompt('Vazifa nomi:');
-    if (!title) return;
-    const desc = prompt('Batafsil tavsif:');
-    const deadline = prompt('Muddat (YYYY-MM-DD):');
-    
+    if (!currentUser) return;
+    const startup = startups.find((item) => item.id === startupId);
+    if (!startup) return;
+    const isMember = startup.egasi_id === currentUser.id || startup.a_zolar.some((member) => member.user_id === currentUser.id);
+    if (!isMember) return alert("Vazifa qo'shish uchun startup a'zosi bo'lish kerak.");
+
+    const title = String(taskDraft.title || '').trim();
+    if (!title) return alert("Vazifa nomini kiriting.");
+    if (taskDraft.deadline && Number.isNaN(new Date(taskDraft.deadline).getTime())) {
+      return alert("Muddat formati noto'g'ri. YYYY-MM-DD ko'rinishida kiriting.");
+    }
+
+    const assignedToId = taskDraft.assigned_to_id || currentUser.id;
+    const assignedMember = startup.a_zolar.find((member) => member.user_id === assignedToId);
     const newTask = {
       id: `t_${Date.now()}`,
       startup_id: startupId,
       title,
-      description: desc || '',
-      assigned_to_id: currentUser?.id || '',
-      assigned_to_name: currentUser?.name || 'Belgilanmagan',
-      deadline: deadline || '',
+      description: taskDraft.description || '',
+      assigned_to_id: assignedToId,
+      assigned_to_name: assignedMember?.name || currentUser?.name || 'Belgilanmagan',
+      deadline: taskDraft.deadline || '',
+      priority: taskDraft.priority || 'medium',
+      estimate_hours: Number(taskDraft.estimate_hours || 0),
+      actual_hours: Number(taskDraft.actual_hours || 0),
+      calendar_tag: taskDraft.calendar_tag || 'backlog',
+      created_by: currentUser.id,
+      actor_id: currentUser.id,
       status: 'todo'
     };
-    
-    await dbOperations.createTask(newTask);
-    
-    const startup = startups.find(s => s.id === startupId);
-    const updatedTasks = [...(startup?.tasks || []), newTask];
-    
-    await dbOperations.updateStartup(startupId, { tasks: updatedTasks });
-    await dbOperations.logWorkspaceActivity(startupId, {
-      user_id: currentUser?.id || 'system',
-      activity_type: 'task_created',
-      payload: { task_id: newTask.id, title: newTask.title },
-      hours_spent: 0
-    });
-    
-    setStartups(prev => prev.map(s => 
-      s.id === startupId ? { ...s, tasks: updatedTasks } : s
-    ));
-    
-    alert('Vazifa muvaffaqiyatli qo\'shildi!');
+
+    try {
+      await dbOperations.createTask(newTask);
+      await refreshWorkspaceAndStartup(startupId);
+      setTaskDraft({
+        ...EMPTY_TASK_DRAFT,
+        assigned_to_id: currentUser.id
+      });
+      alert("Vazifa muvaffaqiyatli qo'shildi!");
+    } catch (e) {
+      alert(e?.message || "Vazifa qo'shishda xatolik.");
+    }
   };
 
   const handleMoveTask = async (startupId, taskId, newStatus) => {
-    await dbOperations.updateTaskStatus(taskId, newStatus);
-    
-    setStartups(prev => prev.map(s => s.id === startupId ? {
-      ...s,
-      tasks: s.tasks.map(t => t.id === taskId ? { ...t, status: newStatus } : t)
-    } : s));
-    
-    const startup = startups.find(s => s.id === startupId);
-    if (startup) {
-      const updatedTasks = startup.tasks.map(t => t.id === taskId ? { ...t, status: newStatus } : t);
-      await dbOperations.updateStartup(startupId, { tasks: updatedTasks });
-      await dbOperations.logWorkspaceActivity(startupId, {
-        user_id: currentUser?.id || 'system',
-        activity_type: 'task_status_changed',
-        payload: { task_id: taskId, status: newStatus },
-        hours_spent: 0
-      });
+    try {
+      await dbOperations.updateTaskStatus(taskId, newStatus, currentUser?.id || '');
+      await refreshWorkspaceAndStartup(startupId);
+    } catch (e) {
+      alert(e?.message || "Vazifa statusini o'zgartirishda xatolik.");
     }
   };
 
   const handleDeleteTask = async (startupId, taskId) => {
     if (!confirm('Vazifani o\'chirmoqchimisiz?')) return;
-    
-    await dbOperations.deleteTask(taskId);
-    
-    const startup = startups.find(s => s.id === startupId);
-    if (startup) {
-      const updatedTasks = startup.tasks.filter(t => t.id !== taskId);
-      await dbOperations.updateStartup(startupId, { tasks: updatedTasks });
-      await dbOperations.logWorkspaceActivity(startupId, {
-        user_id: currentUser?.id || 'system',
-        activity_type: 'task_deleted',
-        payload: { task_id: taskId },
-        hours_spent: 0
-      });
-      
-      setStartups(prev => prev.map(s => 
-        s.id === startupId ? { ...s, tasks: updatedTasks } : s
-      ));
+    try {
+      await dbOperations.deleteTask(taskId, currentUser?.id || '');
+      await refreshWorkspaceAndStartup(startupId);
+      alert("Vazifa o'chirildi!");
+    } catch (e) {
+      alert(e?.message || "Vazifani o'chirishda xatolik.");
     }
-    
-    alert('Vazifa o\'chirildi!');
   };
 
   const handleDeleteStartup = async (startupId) => {
@@ -1524,6 +1733,30 @@ const App = () => {
   const workspaceInvestorIntros = workspaceData.investor_intros || [];
   const workspaceReviews = workspaceData.reviews || [];
   const workspaceAiRisk = workspaceData.ai_risk || null;
+  const workspaceKpi = workspaceData.kpi || null;
+  const workspaceWeeklyReport = workspaceData.weekly_report || null;
+  const startupTasks = Array.isArray(selectedStartup?.tasks) ? selectedStartup.tasks : [];
+  const filteredStartupTasks = useMemo(() => {
+    const q = taskSearch.toLowerCase().trim();
+    return startupTasks.filter((task) => {
+      if (q) {
+        const text = `${task.title || ''} ${task.description || ''} ${task.assigned_to_name || ''}`.toLowerCase();
+        if (!text.includes(q)) return false;
+      }
+      if (taskFilter === 'mine' && task.assigned_to_id !== currentUser?.id) return false;
+      const deadlineState = getTaskDeadlineState(task);
+      if (taskFilter === 'overdue' && deadlineState !== 'overdue') return false;
+      if (taskFilter === 'today' && deadlineState !== 'today') return false;
+      if (taskFilter === 'week' && !['today', 'week'].includes(deadlineState)) return false;
+      if (taskFilter === 'critical' && !['high', 'critical'].includes(task.priority)) return false;
+      return true;
+    });
+  }, [startupTasks, taskSearch, taskFilter, currentUser?.id]);
+  const visibleTaskCounts = useMemo(() => ({
+    todo: filteredStartupTasks.filter((task) => task.status === 'todo').length,
+    'in-progress': filteredStartupTasks.filter((task) => task.status === 'in-progress').length,
+    done: filteredStartupTasks.filter((task) => task.status === 'done').length
+  }), [filteredStartupTasks]);
   const equityTotal = workspaceEquity
     .filter((e) => e.status !== 'archived')
     .reduce((acc, e) => acc + Number(e.share_percent || 0), 0);
@@ -1578,6 +1811,7 @@ const App = () => {
       open: 'Ochiq',
       resolved: 'Yakunlangan',
       active: 'Faol',
+      blocked: 'Bloklangan',
       archived: 'Arxiv',
       draft: 'Qoralama',
       locked: 'Qulflangan',
@@ -1787,6 +2021,30 @@ const App = () => {
 
         <form onSubmit={handleCreateStartup} className="bg-white border border-gray-200 rounded-2xl p-6 md:p-8 space-y-6 md:space-y-8 shadow-md">
           <FileUpload label="Startup logotipi" onChange={handleFileChange} preview={tempFileBase64 || undefined} />
+
+          <div className="space-y-3">
+            <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-widest ml-1">Startup template</label>
+            <select
+              name="template_key"
+              value={selectedTemplateKey}
+              onChange={(e) => setSelectedTemplateKey(e.target.value)}
+              className="w-full h-[44px] bg-white border border-gray-200 rounded-lg px-4 text-[14px] outline-none focus:border-black shadow-sm"
+            >
+              {startupTemplates.map((template) => (
+                <option key={template.key} value={template.key}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+            {activeTemplate && (
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <p className="text-[12px] font-semibold text-slate-700">{activeTemplate.description}</p>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Segment: {activeTemplate.segment} | Standart mutaxassislar: {(activeTemplate.specialists || []).join(', ')}
+                </p>
+              </div>
+            )}
+          </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
             <Input required name="nomi" label="Startup nomi" placeholder="Rocket.io" icon="fa-rocket" />
@@ -1804,7 +2062,16 @@ const App = () => {
 
           <TextArea required name="tavsif" label="Tavsif" placeholder="Startupingizning asosiy maqsadi..." />
           
-          <Input required name="specialists" label="Kerakli Mutaxassislar" helper="Vergul bilan ajrating" placeholder="Frontend, UI/UX Designer" icon="fa-users" />
+          <Input
+            required
+            name="specialists"
+            label="Kerakli Mutaxassislar"
+            helper="Vergul bilan ajrating"
+            placeholder="Frontend, UI/UX Designer"
+            icon="fa-users"
+            value={startupSpecialistsInput}
+            onChange={(e) => setStartupSpecialistsInput(e.target.value)}
+          />
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
             <Input name="github_url" label="GitHub" placeholder="https://github.com/..." icon="fa-github" />
@@ -1931,54 +2198,280 @@ const App = () => {
 
         <div className="min-h-[400px]">
           {activeDetailTab === 'vazifalar' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
-              {['todo', 'in-progress', 'done'].map((status) => (
-                <div key={status} className="flex flex-col gap-4">
-                  <div className="flex items-center justify-between px-2">
-                    <h4 className="text-[10px] md:text-[11px] font-extrabold uppercase tracking-widest text-gray-400 italic">
-                      {status === 'todo' ? 'Kutilmoqda' : status === 'in-progress' ? 'Jarayonda' : 'Bajarildi'}
-                    </h4>
-                    <Badge variant="default">{selectedStartup.tasks?.filter(t => t.status === status).length || 0}</Badge>
+            <div className="space-y-6">
+              {workspaceKpi && (
+                <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+                  {[
+                    { label: 'Jami', value: workspaceKpi.tasks_total ?? 0 },
+                    { label: 'Bajarildi', value: workspaceKpi.tasks_done ?? 0 },
+                    { label: 'Jarayonda', value: workspaceKpi.tasks_in_progress ?? 0 },
+                    { label: 'Muddati o`tgan', value: workspaceKpi.overdue_tasks ?? 0 },
+                    { label: 'Haftalik muddat', value: workspaceKpi.due_this_week ?? 0 },
+                    { label: 'Bajarilish %', value: `${workspaceKpi.completion_rate ?? 0}%` },
+                    { label: 'Faol a`zolar', value: workspaceKpi.active_members_7d ?? 0 },
+                    { label: 'Burn ratio', value: `${workspaceKpi.burn_ratio ?? 0}%` }
+                  ].map((item, index) => (
+                    <div key={`${item.label}-${index}`} className="bg-white border border-gray-200 rounded-xl p-3 text-center">
+                      <p className="text-lg font-black">{item.value}</p>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">{item.label}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {workspaceWeeklyReport && (
+                <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Haftalik hisobot</h3>
+                    <p className="text-[11px] text-gray-500">
+                      {new Date(workspaceWeeklyReport.period_start).toLocaleDateString()} - {new Date(workspaceWeeklyReport.period_end).toLocaleDateString()}
+                    </p>
                   </div>
-                  <div className="space-y-3 min-h-[120px] md:min-h-[400px] p-4 bg-gray-50/30 rounded-2xl border border-gray-100">
-                    {selectedStartup.tasks?.filter(t => t.status === status).map(t => (
-                      <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm group hover:border-black transition-all">
-                        <div className="flex items-start justify-between mb-3">
-                          <h5 className="text-[14px] font-bold leading-tight flex-grow">{t.title}</h5>
-                          <div className="flex gap-1 shrink-0">
-                            <button onClick={() => {
-                              if (status === 'todo') handleMoveTask(selectedStartup.id, t.id, 'in-progress');
-                              else if (status === 'in-progress') handleMoveTask(selectedStartup.id, t.id, 'done');
-                              else handleMoveTask(selectedStartup.id, t.id, 'todo');
-                            }} className="text-gray-300 hover:text-black transition-colors p-2 shrink-0" title="Keyingi bosqichga o'tkazish">
-                              <i className="fa-solid fa-arrow-right-long text-[10px]"></i>
-                            </button>
-                            {isOwner && (
-                              <button onClick={() => handleDeleteTask(selectedStartup.id, t.id)} className="text-gray-300 hover:text-rose-600 transition-colors p-2 shrink-0" title="O'chirish">
-                                <i className="fa-solid fa-trash text-[10px]"></i>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-[12px] text-gray-500 mb-4 line-clamp-2">{t.description}</p>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-5 h-5 bg-gray-100 rounded-full border border-gray-200 flex items-center justify-center text-[8px] font-bold uppercase shrink-0">{t.assigned_to_name[0]}</div>
-                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest truncate">{t.assigned_to_name}</span>
-                          </div>
-                          {t.deadline && <span className="text-[9px] font-bold text-rose-400 uppercase tracking-widest ml-2 shrink-0">{t.deadline}</span>}
-                        </div>
-                      </div>
-                    ))}
-                    {status === 'todo' && (isOwner || isMember) && (
-                      <button onClick={() => handleAddTask(selectedStartup.id)} className="w-full py-8 border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center text-gray-300 hover:text-black hover:border-black transition-all group">
-                        <i className="fa-solid fa-plus text-sm mb-1"></i>
-                        <span className="text-[10px] font-bold uppercase tracking-widest">Yangi vazifa</span>
-                      </button>
-                    )}
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      {(workspaceWeeklyReport.highlights || []).map((line, idx) => (
+                        <p key={`hl-${idx}`} className="text-[12px] text-gray-700 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-bold uppercase tracking-widest text-gray-500">Keyingi ustuvorliklar</p>
+                      {(workspaceWeeklyReport.next_priorities || []).slice(0, 5).map((item, idx) => (
+                        <p key={`np-${idx}`} className="text-[12px] text-gray-700 border border-gray-100 rounded-lg px-3 py-2">
+                          {idx + 1}. {item}
+                        </p>
+                      ))}
+                      {(!workspaceWeeklyReport.next_priorities || workspaceWeeklyReport.next_priorities.length === 0) && (
+                        <p className="text-[12px] text-gray-500">Muammoli ustuvorlik topilmadi.</p>
+                      )}
+                    </div>
                   </div>
                 </div>
-              ))}
+              )}
+
+              {startupCalendar && (
+                <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Kalendar</h3>
+                    <Badge variant="default">Deadline: {startupCalendar.summary?.total_with_deadline ?? 0}</Badge>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    {[
+                      { label: "O'tib ketgan", value: startupCalendar.summary?.overdue ?? 0 },
+                      { label: 'Bugun', value: startupCalendar.summary?.today ?? 0 },
+                      { label: 'Shu hafta', value: startupCalendar.summary?.this_week ?? 0 },
+                      { label: 'Keyingi hafta', value: startupCalendar.summary?.next_week ?? 0 },
+                      { label: "Muddat yo'q", value: startupCalendar.summary?.no_deadline ?? 0 }
+                    ].map((item, index) => (
+                      <div key={`cal-${index}`} className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-center">
+                        <p className="text-lg font-black">{item.value}</p>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-widest">{item.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-white border border-gray-200 rounded-2xl p-4 md:p-5 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  {[
+                    { key: 'all', label: 'Hammasi' },
+                    { key: 'overdue', label: "Muddati o'tgan" },
+                    { key: 'today', label: 'Bugungi' },
+                    { key: 'week', label: 'Haftalik' },
+                    { key: 'mine', label: 'Mening vazifam' },
+                    { key: 'critical', label: 'Muhim' }
+                  ].map((filterItem) => (
+                    <button
+                      key={filterItem.key}
+                      onClick={() => setTaskFilter(filterItem.key)}
+                      className={`h-8 px-3 rounded-full border text-[11px] font-semibold ${taskFilter === filterItem.key ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'}`}
+                    >
+                      {filterItem.label}
+                    </button>
+                  ))}
+                </div>
+                <Input
+                  value={taskSearch}
+                  onChange={(e) => setTaskSearch(e.target.value)}
+                  placeholder="Vazifa bo'yicha qidiruv..."
+                  icon="fa-magnifying-glass"
+                />
+              </div>
+
+              {(isOwner || isMember) && (
+                <div className="bg-white border border-gray-200 rounded-2xl p-5 space-y-4">
+                  <h3 className="text-[13px] font-black uppercase tracking-widest text-gray-600">Yangi vazifa yaratish</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <Input
+                      label="Vazifa nomi"
+                      value={taskDraft.title}
+                      onChange={(e) => setTaskDraft((prev) => ({ ...prev, title: e.target.value }))}
+                      placeholder="Masalan: Login oqimini tugatish"
+                    />
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-widest ml-1">Mas'ul</label>
+                      <select
+                        value={taskDraft.assigned_to_id}
+                        onChange={(e) => setTaskDraft((prev) => ({ ...prev, assigned_to_id: e.target.value }))}
+                        className="w-full h-[44px] border border-gray-200 rounded-lg px-3 text-[13px]"
+                      >
+                        <option value={currentUser?.id || ''}>Mening zimamda</option>
+                        {selectedStartup.a_zolar.map((member) => (
+                          <option key={member.user_id} value={member.user_id}>{member.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <TextArea
+                      label="Batafsil tavsif"
+                      value={taskDraft.description}
+                      onChange={(e) => setTaskDraft((prev) => ({ ...prev, description: e.target.value }))}
+                      placeholder="Qanday natija chiqishi kerak..."
+                    />
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <Input
+                          type="date"
+                          label="Muddat"
+                          value={taskDraft.deadline}
+                          onChange={(e) => setTaskDraft((prev) => ({ ...prev, deadline: e.target.value }))}
+                        />
+                        <div className="space-y-1.5">
+                          <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-widest ml-1">Ustuvorlik</label>
+                          <select
+                            value={taskDraft.priority}
+                            onChange={(e) => setTaskDraft((prev) => ({ ...prev, priority: e.target.value }))}
+                            className="w-full h-[44px] border border-gray-200 rounded-lg px-3 text-[13px]"
+                          >
+                            <option value="low">Past</option>
+                            <option value="medium">O'rtacha</option>
+                            <option value="high">Yuqori</option>
+                            <option value="critical">Kritik</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Input
+                          type="number"
+                          min="0"
+                          label="Reja soat"
+                          value={taskDraft.estimate_hours}
+                          onChange={(e) => setTaskDraft((prev) => ({ ...prev, estimate_hours: e.target.value }))}
+                          placeholder="8"
+                        />
+                        <Input
+                          type="number"
+                          min="0"
+                          label="Amaldagi soat"
+                          value={taskDraft.actual_hours}
+                          onChange={(e) => setTaskDraft((prev) => ({ ...prev, actual_hours: e.target.value }))}
+                          placeholder="0"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-widest ml-1">Kalendar turi</label>
+                        <select
+                          value={taskDraft.calendar_tag}
+                          onChange={(e) => setTaskDraft((prev) => ({ ...prev, calendar_tag: e.target.value }))}
+                          className="w-full h-[44px] border border-gray-200 rounded-lg px-3 text-[13px]"
+                        >
+                          <option value="backlog">Backlog</option>
+                          <option value="planning">Rejalash</option>
+                          <option value="development">Dasturlash</option>
+                          <option value="design">Dizayn</option>
+                          <option value="qa">Test</option>
+                          <option value="release">Chiqarish</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                  <Button onClick={() => handleAddTask(selectedStartup.id)} icon="fa-plus">Vazifa qo'shish</Button>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8">
+                {['todo', 'in-progress', 'done'].map((status) => (
+                  <div key={status} className="flex flex-col gap-4">
+                    <div className="flex items-center justify-between px-2">
+                      <h4 className="text-[10px] md:text-[11px] font-extrabold uppercase tracking-widest text-gray-400 italic">
+                        {status === 'todo' ? 'Kutilmoqda' : status === 'in-progress' ? 'Jarayonda' : 'Bajarildi'}
+                      </h4>
+                      <Badge variant="default">{visibleTaskCounts[status] || 0}</Badge>
+                    </div>
+                    <div className="space-y-3 min-h-[120px] md:min-h-[400px] p-4 bg-gray-50/30 rounded-2xl border border-gray-100">
+                      {filteredStartupTasks.filter((task) => task.status === status).map((task) => {
+                        const deadlineState = getTaskDeadlineState(task);
+                        const deadlineClass = deadlineState === 'overdue'
+                          ? 'text-rose-600'
+                          : deadlineState === 'today'
+                            ? 'text-amber-600'
+                            : 'text-slate-500';
+                        const priorityClass = task.priority === 'critical'
+                          ? 'bg-rose-100 text-rose-700 border-rose-200'
+                          : task.priority === 'high'
+                            ? 'bg-amber-100 text-amber-700 border-amber-200'
+                            : task.priority === 'low'
+                              ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                              : 'bg-slate-100 text-slate-700 border-slate-200';
+                        return (
+                          <div key={task.id} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm group hover:border-black transition-all">
+                            <div className="flex items-start justify-between mb-3 gap-3">
+                              <div className="space-y-2 min-w-0">
+                                <h5 className="text-[14px] font-bold leading-tight break-words">{task.title}</h5>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`text-[10px] font-bold uppercase tracking-widest border rounded-full px-2 py-0.5 ${priorityClass}`}>
+                                    {task.priority || "o'rtacha"}
+                                  </span>
+                                  {task.calendar_tag && (
+                                    <span className="text-[10px] uppercase tracking-widest text-gray-500">{task.calendar_tag}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex gap-1 shrink-0">
+                                <button
+                                  onClick={() => {
+                                    if (status === 'todo') handleMoveTask(selectedStartup.id, task.id, 'in-progress');
+                                    else if (status === 'in-progress') handleMoveTask(selectedStartup.id, task.id, 'done');
+                                    else handleMoveTask(selectedStartup.id, task.id, 'todo');
+                                  }}
+                                  className="text-gray-300 hover:text-black transition-colors p-2 shrink-0"
+                                  title="Keyingi bosqichga o'tkazish"
+                                >
+                                  <i className="fa-solid fa-arrow-right-long text-[10px]"></i>
+                                </button>
+                                {isOwner && (
+                                  <button onClick={() => handleDeleteTask(selectedStartup.id, task.id)} className="text-gray-300 hover:text-rose-600 transition-colors p-2 shrink-0" title="O'chirish">
+                                    <i className="fa-solid fa-trash text-[10px]"></i>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <p className="text-[12px] text-gray-500 mb-3 line-clamp-3">{task.description}</p>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className="w-5 h-5 bg-gray-100 rounded-full border border-gray-200 flex items-center justify-center text-[8px] font-bold uppercase shrink-0">
+                                  {(task.assigned_to_name || 'A')[0]}
+                                </div>
+                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest truncate">{task.assigned_to_name || 'Belgilanmagan'}</span>
+                              </div>
+                              <div className="text-right shrink-0">
+                                {task.deadline && <p className={`text-[9px] font-bold uppercase tracking-widest ${deadlineClass}`}>{task.deadline}</p>}
+                                <p className="text-[9px] text-gray-400">
+                                  {Number(task.actual_hours || 0)}h / {Number(task.estimate_hours || 0)}h
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {filteredStartupTasks.filter((task) => task.status === status).length === 0 && (
+                        <p className="text-[12px] text-gray-500 text-center py-8">Bu ustunda vazifa yo'q.</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -2531,21 +3024,29 @@ const App = () => {
                   </p>
                   <div className="space-y-3">
                     {memberRecommendations.map((candidate) => (
-                      <div key={candidate.id} className="border border-gray-100 rounded-xl p-3 md:p-4 flex items-center justify-between gap-3">
+                      <div key={candidate.id} className="border border-gray-100 rounded-xl p-3 md:p-4 flex items-start justify-between gap-3">
                         <button
                           onClick={() => handleOpenUserProfile(candidate.id)}
-                          className="flex items-center gap-3 min-w-0 text-left"
+                          className="flex items-start gap-3 min-w-0 text-left"
                         >
                           <img
                             src={candidate.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(candidate.name || 'Foydalanuvchi')}&background=111&color=fff`}
                             className="w-11 h-11 rounded-xl object-cover border border-gray-100 shrink-0"
                             alt={candidate.name}
                           />
-                          <div className="min-w-0">
+                          <div className="min-w-0 space-y-1">
                             <p className="text-[13px] font-bold truncate">{candidate.name}</p>
                             <p className="text-[11px] text-gray-500 truncate">
-                              Moslik: {candidate.match_score} | {(candidate.matched_specialties || []).join(', ')}
+                              Moslik: {candidate.match_score}/100 | Reputatsiya: {candidate.reputation_score ?? 0}/100 | Bandlik: {candidate.availability_score ?? 0}/100
                             </p>
+                            <p className="text-[11px] text-gray-500 truncate">
+                              Mutaxassislik: {(candidate.matched_specialties || []).join(', ')}
+                            </p>
+                            {(candidate.reason || []).slice(0, 2).map((reasonLine, idx) => (
+                              <p key={`${candidate.id}-reason-${idx}`} className="text-[11px] text-gray-600 bg-slate-50 border border-slate-100 rounded-md px-2 py-1">
+                                {reasonLine}
+                              </p>
+                            ))}
                           </div>
                         </button>
                         <Button
@@ -2631,12 +3132,39 @@ const App = () => {
                 )}
                 <Button onClick={openEditProfileModal} variant="secondary" size="md" className="h-10">Tahrirlash</Button>
                 <Button onClick={handleLogout} variant="danger" size="md" className="h-10">Chiqish</Button>
+                {currentUser.cv_data && (
+                  <Button variant="secondary" icon="fa-file-lines" onClick={() => handleOpenCv(currentUser)} className="h-10 border border-gray-100">
+                    CV
+                  </Button>
+                )}
                 {currentUser.portfolio_url && <Button variant="ghost" icon="fa-link" onClick={() => window.open(currentUser.portfolio_url, '_blank')} className="h-10 border border-gray-100" />}
               </div>
             </div>
             <p className="text-[13px] md:text-[14px] text-gray-500 mt-4">
               {currentUser.bio || "O'zingiz haqingizda bir necha so'z yozing."}
             </p>
+            <div className="mt-4">
+              {currentUser.cv_data ? (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-semibold text-slate-700 truncate">
+                      <i className="fa-solid fa-file-lines mr-2"></i>
+                      {currentUser.cv_file_name || 'CV'}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Hajm: {formatFileSize(Number(currentUser.cv_size || 0))}
+                      {currentUser.cv_updated_at ? ` | Yangilangan: ${new Date(currentUser.cv_updated_at).toLocaleString()}` : ''}
+                    </p>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <Button size="sm" variant="secondary" onClick={() => handleOpenCv(currentUser)} icon="fa-eye">Ko'rish</Button>
+                    <Button size="sm" variant="secondary" onClick={() => handleDownloadCv(currentUser)} icon="fa-download">Yuklab olish</Button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[12px] text-gray-500">CV yuklanmagan.</p>
+              )}
+            </div>
           </div>
         </div>
 
@@ -3256,6 +3784,40 @@ const App = () => {
         <div className="space-y-6 md:space-y-8">
           <FileUpload label="Profil banneri" onChange={handleBannerChange} preview={tempBannerBase64 || editedUser.banner || currentUser?.banner} icon="fa-image" />
           <FileUpload label="Profil rasmi" onChange={handleFileChange} preview={editedUser.avatar || currentUser?.avatar} />
+          <div className="space-y-2">
+            <label className="block text-[11px] font-bold text-gray-700 uppercase tracking-widest ml-1">CV yuklash (PDF, DOC, DOCX)</label>
+            <div className="border border-gray-200 rounded-xl p-4 bg-slate-50/70 space-y-3">
+              {(editedUser.cv_data || currentUser?.cv_data) ? (
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-semibold text-gray-700 truncate">
+                      <i className="fa-solid fa-file-lines mr-2"></i>
+                      {editedUser.cv_file_name || currentUser?.cv_file_name || 'CV'}
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      Hajm: {formatFileSize(Number(editedUser.cv_size || currentUser?.cv_size || 0))}
+                    </p>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <Button size="sm" variant="secondary" onClick={() => handleOpenCv(editedUser.cv_data ? editedUser : currentUser)} icon="fa-eye">Ko'rish</Button>
+                    <Button size="sm" variant="danger" onClick={handleRemoveCv} icon="fa-trash">O'chirish</Button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[12px] text-gray-500">CV hali yuklanmagan.</p>
+              )}
+              <label className="inline-flex items-center gap-2 px-3 h-9 rounded-lg border border-gray-300 bg-white text-[12px] font-semibold cursor-pointer hover:border-black transition">
+                <i className="fa-solid fa-upload"></i>
+                CV fayl tanlash
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  onChange={handleCvFileChange}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
             <Input label="Ism" value={editedUser.name || currentUser?.name || ''} onChange={(e) => setEditedUser(prev => ({ ...prev, name: e.target.value }))} icon="fa-signature" />
             <Input label="Telefon" value={editedUser.phone || currentUser?.phone || ''} onChange={(e) => setEditedUser(prev => ({ ...prev, phone: e.target.value }))} icon="fa-phone" />
@@ -3359,6 +3921,12 @@ const App = () => {
                   </div>
                   <p className="text-[12px] text-gray-500 mt-1">{viewedUser.email}</p>
                   {viewedUser.phone && <p className="text-[12px] text-gray-500">{viewedUser.phone}</p>}
+                  {viewedUser.cv_data && (
+                    <div className="flex gap-2 mt-3">
+                      <Button size="sm" variant="secondary" onClick={() => handleOpenCv(viewedUser)} icon="fa-file-lines">CV ko'rish</Button>
+                      <Button size="sm" variant="secondary" onClick={() => handleDownloadCv(viewedUser)} icon="fa-download">Yuklab olish</Button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

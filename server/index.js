@@ -19,6 +19,8 @@ const parseJson = (value, fallback = []) => {
   }
 };
 
+const toBool = (value) => value === 1 || value === '1' || value === true;
+
 const logAction = async (actorId, action, entityType, entityId, meta = {}) => {
   if (!actorId) return;
   await run(
@@ -49,12 +51,17 @@ const mapUser = (row) => {
     avatar: row.avatar,
     banner: row.banner || '',
     portfolio_url: row.portfolio_url,
+    cv_data: row.cv_data || '',
+    cv_file_name: row.cv_file_name || '',
+    cv_mime: row.cv_mime || '',
+    cv_size: Number(row.cv_size || 0),
+    cv_updated_at: row.cv_updated_at || null,
     skills: parseJson(row.skills),
     languages: parseJson(row.languages),
     tools: parseJson(row.tools),
     created_at: row.created_at,
-    banned: row.banned === 1,
-    is_pro: row.is_pro === 1,
+    banned: toBool(row.banned),
+    is_pro: toBool(row.is_pro),
     pro_status: row.pro_status || 'free',
     pro_updated_at: row.pro_updated_at || null
   };
@@ -80,6 +87,8 @@ const mapStartup = (row) => {
     website_url: row.website_url || '',
     rejection_reason: row.rejection_reason || null,
     segment: row.segment || 'IT asoschi + dasturchi',
+    template_key: row.template_key || '',
+    template_name: row.template_name || '',
     lifecycle_status: row.lifecycle_status || 'live',
     success_fee_percent: row.success_fee_percent ?? 1.5,
     registry_notes: row.registry_notes || ''
@@ -110,7 +119,7 @@ const mapNotification = (row) => {
     title: row.title,
     text: row.text,
     type: row.type,
-    is_read: row.is_read === 1,
+    is_read: toBool(row.is_read),
     meta: parseJson(row.meta, null),
     created_at: row.created_at
   };
@@ -126,8 +135,14 @@ const mapTask = (row) => {
     assigned_to_id: row.assigned_to_id,
     assigned_to_name: row.assigned_to_name,
     deadline: row.deadline,
+    priority: row.priority || 'medium',
+    estimate_hours: Number(row.estimate_hours || 0),
+    actual_hours: Number(row.actual_hours || 0),
+    calendar_tag: row.calendar_tag || '',
+    created_by: row.created_by || '',
     status: row.status,
-    created_at: row.created_at
+    created_at: row.created_at,
+    updated_at: row.updated_at || row.created_at
   };
 };
 
@@ -200,6 +215,67 @@ const nowIso = () => new Date().toISOString();
 const makeId = (prefix) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 const toBoolInt = (value) => (value ? 1 : 0);
 
+const STARTUP_TEMPLATES = [
+  {
+    key: 'it_mvp',
+    name: 'IT MVP',
+    segment: 'IT asoschisi + dasturchi',
+    description: "Tez MVP chiqish uchun bazaviy texnik tarkib va sprint vazifalari.",
+    specialists: ['Frontend', 'Backend', 'UI/UX', 'QA'],
+    default_tasks: [
+      { title: 'MVP scope aniqlash', description: "Asosiy 3-5 funksiyani muzlatish.", days_offset: 2, priority: 'high', estimate_hours: 8, calendar_tag: 'planning' },
+      { title: 'Dizayn prototipi', description: "Figma oqimi va asosiy ekranlar.", days_offset: 5, priority: 'high', estimate_hours: 12, calendar_tag: 'design' },
+      { title: 'Backend API skeleti', description: "Auth, startup, task endpointlar.", days_offset: 8, priority: 'medium', estimate_hours: 16, calendar_tag: 'development' },
+      { title: 'Frontend integratsiya', description: "Asosiy sahifalarni API bilan boglash.", days_offset: 12, priority: 'medium', estimate_hours: 20, calendar_tag: 'development' },
+      { title: 'Demo va test', description: "Smoke test va birinchi demo tayyorlash.", days_offset: 15, priority: 'high', estimate_hours: 10, calendar_tag: 'release' }
+    ]
+  },
+  {
+    key: 'saas_b2b',
+    name: 'SaaS B2B',
+    segment: 'SaaS',
+    description: "B2B SaaS uchun sotuv pipeline va product validatsiya shabloni.",
+    specialists: ['Product manager', 'Backend', 'Frontend', 'Sotuv'],
+    default_tasks: [
+      { title: 'ICP va pain point', description: "Asosiy mijoz segmentini yozib chiqish.", days_offset: 3, priority: 'high', estimate_hours: 6, calendar_tag: 'planning' },
+      { title: 'Onboarding flow', description: "Ro'yxatdan o'tish va trial oqimi.", days_offset: 7, priority: 'high', estimate_hours: 14, calendar_tag: 'product' },
+      { title: 'Billing integratsiya', description: "Pro tolov va plan boshqaruvi.", days_offset: 11, priority: 'medium', estimate_hours: 10, calendar_tag: 'billing' },
+      { title: 'Sales pipeline', description: "Lead -> call -> proposal bosqichlari.", days_offset: 14, priority: 'medium', estimate_hours: 8, calendar_tag: 'sales' }
+    ]
+  },
+  {
+    key: 'ai_product',
+    name: 'AI Mahsulot',
+    segment: "Sun'iy intellekt / ML",
+    description: "AI mahsulot uchun data, model va release boshqaruv shabloni.",
+    specialists: ['ML muhandis', 'Backend', 'Frontend', 'Prompt muhandis'],
+    default_tasks: [
+      { title: 'Data manbalarini yigish', description: "Model uchun zarur datasetni tayyorlash.", days_offset: 4, priority: 'high', estimate_hours: 14, calendar_tag: 'data' },
+      { title: 'Model baseline', description: "Birinchi model va metrikalarni chiqarish.", days_offset: 9, priority: 'high', estimate_hours: 16, calendar_tag: 'ml' },
+      { title: 'Inference API', description: "Modeldan javob beruvchi endpoint.", days_offset: 12, priority: 'medium', estimate_hours: 12, calendar_tag: 'development' },
+      { title: 'Monitoring va feedback', description: "Xato logi va foydalanuvchi feedback oqimi.", days_offset: 16, priority: 'medium', estimate_hours: 10, calendar_tag: 'ops' }
+    ]
+  }
+];
+
+const normalizeTaskPriority = (value) => {
+  const v = String(value || '').toLowerCase().trim();
+  if (['low', 'medium', 'high', 'critical'].includes(v)) return v;
+  return 'medium';
+};
+
+const normalizeTaskStatus = (value) => {
+  const v = String(value || '').toLowerCase().trim();
+  if (['todo', 'in-progress', 'done'].includes(v)) return v;
+  return 'todo';
+};
+
+const getTemplateByKey = (value) => {
+  const key = String(value || '').trim();
+  if (!key) return null;
+  return STARTUP_TEMPLATES.find((t) => t.key === key) || null;
+};
+
 const isStartupMember = (startup, userId) => {
   if (!startup || !userId) return false;
   if (startup.egasi_id === userId) return true;
@@ -252,6 +328,212 @@ const daysDiff = (from, to = new Date()) => {
 };
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const toDateOnly = (value) => {
+  if (!value) return '';
+  const d = safeDate(value);
+  if (!d) return '';
+  return d.toISOString().slice(0, 10);
+};
+
+const startOfDay = (value = new Date()) => {
+  const d = new Date(value);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const endOfDay = (value = new Date()) => {
+  const d = new Date(value);
+  d.setHours(23, 59, 59, 999);
+  return d;
+};
+
+const buildCalendarSummary = (tasks) => {
+  const now = new Date();
+  const todayStart = startOfDay(now);
+  const todayEnd = endOfDay(now);
+  const weekEnd = endOfDay(new Date(todayStart.getTime() + 6 * 24 * 60 * 60 * 1000));
+  const nextWeekEnd = endOfDay(new Date(todayStart.getTime() + 13 * 24 * 60 * 60 * 1000));
+
+  let overdue = 0;
+  let today = 0;
+  let thisWeek = 0;
+  let nextWeek = 0;
+  let noDeadline = 0;
+
+  const events = tasks
+    .filter((task) => !!task.deadline)
+    .map((task) => {
+      const deadline = safeDate(task.deadline);
+      const daysLeft = deadline ? Math.ceil((startOfDay(deadline).getTime() - todayStart.getTime()) / (24 * 60 * 60 * 1000)) : null;
+      return {
+        ...task,
+        days_left: daysLeft,
+        is_overdue: !!(deadline && deadline < todayStart && task.status !== 'done'),
+        deadline_date: toDateOnly(task.deadline)
+      };
+    })
+    .sort((a, b) => {
+      const ad = safeDate(a.deadline)?.getTime() || 0;
+      const bd = safeDate(b.deadline)?.getTime() || 0;
+      return ad - bd;
+    });
+
+  for (const task of tasks) {
+    if (!task.deadline) {
+      noDeadline += 1;
+      continue;
+    }
+    const deadline = safeDate(task.deadline);
+    if (!deadline) continue;
+    if (task.status !== 'done' && deadline < todayStart) overdue += 1;
+    if (deadline >= todayStart && deadline <= todayEnd) today += 1;
+    if (deadline >= todayStart && deadline <= weekEnd) thisWeek += 1;
+    if (deadline > weekEnd && deadline <= nextWeekEnd) nextWeek += 1;
+  }
+
+  return {
+    summary: {
+      overdue,
+      today,
+      this_week: thisWeek,
+      next_week: nextWeek,
+      no_deadline: noDeadline,
+      total_with_deadline: events.length
+    },
+    events
+  };
+};
+
+const syncStartupTasks = async (startupId) => {
+  if (!startupId) return [];
+  const rows = await all('SELECT * FROM tasks WHERE startup_id = ? ORDER BY created_at DESC', [startupId]);
+  const mapped = rows.map(mapTask);
+  await run('UPDATE startups SET tasks = ? WHERE id = ?', [JSON.stringify(mapped), startupId]);
+  return mapped;
+};
+
+const buildWorkspaceInsights = ({ startup, tasks, decisions, memberVotes, activities }) => {
+  const now = new Date();
+  const weekStart = startOfDay(new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000));
+  const weekEnd = endOfDay(now);
+
+  const taskRows = Array.isArray(tasks) ? tasks : [];
+  const activityRows = Array.isArray(activities) ? activities : [];
+  const members = startup?.a_zolar || [];
+  const memberNameMap = Object.fromEntries(members.map((m) => [m.user_id, m.name]));
+
+  const todoCount = taskRows.filter((t) => t.status === 'todo').length;
+  const inProgressCount = taskRows.filter((t) => t.status === 'in-progress').length;
+  const doneCount = taskRows.filter((t) => t.status === 'done').length;
+  const blockedCount = taskRows.filter((t) => t.status === 'blocked').length;
+  const totalTasks = taskRows.length;
+
+  const overdueCount = taskRows.filter((t) => {
+    const deadline = safeDate(t.deadline);
+    return !!(deadline && deadline < startOfDay(now) && t.status !== 'done');
+  }).length;
+  const dueThisWeekCount = taskRows.filter((t) => {
+    const deadline = safeDate(t.deadline);
+    return !!(deadline && deadline >= weekStart && deadline <= weekEnd);
+  }).length;
+
+  const completionRate = totalTasks ? doneCount / totalTasks : 0;
+  const estimateTotal = taskRows.reduce((acc, task) => acc + Number(task.estimate_hours || 0), 0);
+  const actualTotal = taskRows.reduce((acc, task) => acc + Number(task.actual_hours || 0), 0);
+  const burnRatio = estimateTotal > 0 ? actualTotal / estimateTotal : 0;
+
+  const recentActivities = activityRows.filter((act) => {
+    const created = safeDate(act.created_at);
+    return !!(created && created >= weekStart && created <= weekEnd);
+  });
+  const activeMemberIds = new Set(recentActivities.map((act) => act.user_id).filter(Boolean));
+
+  const taskCompletedActivity = recentActivities.filter((act) => {
+    if (act.activity_type !== 'task_status_changed') return false;
+    const payload = parseJson(act.payload, {});
+    return payload?.status === 'done';
+  }).length;
+
+  const contributionMap = {};
+  for (const act of recentActivities) {
+    const key = act.user_id || 'system';
+    if (!contributionMap[key]) {
+      contributionMap[key] = {
+        user_id: key,
+        user_name: memberNameMap[key] || key,
+        actions: 0,
+        hours: 0
+      };
+    }
+    contributionMap[key].actions += 1;
+    contributionMap[key].hours += Number(act.hours_spent || 0);
+  }
+  const topContributors = Object.values(contributionMap)
+    .sort((a, b) => (b.actions + b.hours) - (a.actions + a.hours))
+    .slice(0, 5)
+    .map((item) => ({
+      ...item,
+      hours: Number(item.hours.toFixed(1))
+    }));
+
+  const calendar = buildCalendarSummary(taskRows);
+  const nextPriorities = [
+    ...taskRows
+      .filter((t) => {
+        const deadline = safeDate(t.deadline);
+        return t.status !== 'done' && deadline && deadline <= endOfDay(new Date(now.getTime() + 6 * 24 * 60 * 60 * 1000));
+      })
+      .sort((a, b) => {
+        const ad = safeDate(a.deadline)?.getTime() || 0;
+        const bd = safeDate(b.deadline)?.getTime() || 0;
+        return ad - bd;
+      })
+      .slice(0, 5)
+      .map((t) => t.title),
+    ...taskRows
+      .filter((t) => t.status === 'blocked')
+      .slice(0, 3)
+      .map((t) => `${t.title} (bloklangan)`)
+  ].slice(0, 6);
+
+  const highlights = [];
+  highlights.push(`Jami vazifa: ${totalTasks}, bajarilgan: ${doneCount}, jarayonda: ${inProgressCount}.`);
+  highlights.push(`Haftalik completion: ${Math.round(completionRate * 100)}%, muddati o'tgani: ${overdueCount} ta.`);
+  highlights.push(`So'nggi 7 kun faol a'zolar: ${activeMemberIds.size}/${members.length || 1}.`);
+  if (taskCompletedActivity > 0) highlights.push(`So'nggi 7 kunda ${taskCompletedActivity} ta vazifa yakunlandi.`);
+  if (blockedCount > 0) highlights.push(`Bloklangan vazifalar bor: ${blockedCount} ta.`);
+  if (estimateTotal > 0) highlights.push(`Vaqt sarfi nisbati: ${Math.round(burnRatio * 100)}% (${actualTotal.toFixed(1)}h / ${estimateTotal.toFixed(1)}h).`);
+
+  return {
+    kpi: {
+      tasks_total: totalTasks,
+      tasks_todo: todoCount,
+      tasks_in_progress: inProgressCount,
+      tasks_done: doneCount,
+      tasks_blocked: blockedCount,
+      overdue_tasks: overdueCount,
+      due_this_week: dueThisWeekCount,
+      completion_rate: Number((completionRate * 100).toFixed(1)),
+      active_members_7d: activeMemberIds.size,
+      members_total: members.length,
+      open_decisions: Array.isArray(decisions) ? decisions.filter((d) => d.status === 'open').length : 0,
+      open_member_votes: Array.isArray(memberVotes) ? memberVotes.filter((v) => v.status === 'open').length : 0,
+      estimated_hours: Number(estimateTotal.toFixed(1)),
+      actual_hours: Number(actualTotal.toFixed(1)),
+      burn_ratio: Number((burnRatio * 100).toFixed(1))
+    },
+    weekly_report: {
+      generated_at: now.toISOString(),
+      period_start: weekStart.toISOString(),
+      period_end: weekEnd.toISOString(),
+      highlights,
+      top_contributors: topContributors,
+      next_priorities: nextPriorities
+    },
+    calendar_summary: calendar.summary
+  };
+};
 
 const buildStartupReputationGraph = async (startupId) => {
   const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
@@ -793,9 +1075,9 @@ app.post('/api/users', async (req, res) => {
   await run(
     `INSERT INTO users (
       id, email, password, name, phone, role, bio, avatar, banner, portfolio_url, skills, languages, tools, created_at,
-      is_pro, pro_status, pro_updated_at
+      is_pro, pro_status, pro_updated_at, cv_data, cv_file_name, cv_mime, cv_size, cv_updated_at
     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       u.id,
       u.email,
@@ -813,7 +1095,12 @@ app.post('/api/users', async (req, res) => {
       u.created_at || new Date().toISOString(),
       u.is_pro ? 1 : 0,
       u.pro_status || 'free',
-      u.pro_updated_at || null
+      u.pro_updated_at || null,
+      u.cv_data || '',
+      u.cv_file_name || '',
+      u.cv_mime || '',
+      Number(u.cv_size || 0),
+      u.cv_updated_at || null
     ]
   );
   const created = await get('SELECT * FROM users WHERE id = ?', [u.id]);
@@ -826,6 +1113,75 @@ app.put('/api/users/:id', async (req, res) => {
   values.push(req.params.id);
   await run(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, values);
   const updated = await get('SELECT * FROM users WHERE id = ?', [req.params.id]);
+  res.json(mapUser(updated));
+});
+
+app.post('/api/users/:id/cv', async (req, res) => {
+  const userId = req.params.id;
+  const actorId = req.body?.actor_id;
+  const actorRole = req.body?.actor_role;
+  if (!actorId) return res.status(400).send('actor_id talab qilinadi');
+  if (actorId !== userId && actorRole !== 'admin') return res.status(403).send('Faqat egasi yoki admin CV yuklay oladi');
+
+  const existing = await get('SELECT * FROM users WHERE id = ?', [userId]);
+  if (!existing) return res.status(404).send('Foydalanuvchi topilmadi');
+
+  const cvData = String(req.body?.cv_data || '');
+  const cvFileName = String(req.body?.cv_file_name || '').trim();
+  const cvMime = String(req.body?.cv_mime || '').trim();
+  const cvSize = Number(req.body?.cv_size || 0);
+  if (!cvData || !cvFileName || !cvMime) {
+    return res.status(400).send('cv_data, cv_file_name, cv_mime talab qilinadi');
+  }
+  if (!cvData.startsWith('data:')) {
+    return res.status(400).send('cv_data format notogri');
+  }
+  const allowedMime = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ];
+  if (!allowedMime.includes(cvMime)) {
+    return res.status(400).send('CV turi faqat PDF, DOC yoki DOCX bolishi kerak');
+  }
+  if (!Number.isFinite(cvSize) || cvSize <= 0 || cvSize > 10 * 1024 * 1024) {
+    return res.status(400).send('CV hajmi 10MB dan oshmasligi kerak');
+  }
+
+  const now = nowIso();
+  await run(
+    `UPDATE users
+     SET cv_data = ?, cv_file_name = ?, cv_mime = ?, cv_size = ?, cv_updated_at = ?
+     WHERE id = ?`,
+    [cvData, cvFileName, cvMime, cvSize, now, userId]
+  );
+  const updated = await get('SELECT * FROM users WHERE id = ?', [userId]);
+  await logAction(actorId, 'upload_cv', 'user', userId, {
+    cv_file_name: cvFileName,
+    cv_mime: cvMime,
+    cv_size: cvSize
+  });
+  res.json(mapUser(updated));
+});
+
+app.delete('/api/users/:id/cv', async (req, res) => {
+  const userId = req.params.id;
+  const actorId = req.query?.actor_id;
+  const actorRole = req.query?.actor_role;
+  if (!actorId) return res.status(400).send('actor_id talab qilinadi');
+  if (actorId !== userId && actorRole !== 'admin') return res.status(403).send('Faqat egasi yoki admin CV ochira oladi');
+
+  const existing = await get('SELECT * FROM users WHERE id = ?', [userId]);
+  if (!existing) return res.status(404).send('Foydalanuvchi topilmadi');
+
+  await run(
+    `UPDATE users
+     SET cv_data = '', cv_file_name = '', cv_mime = '', cv_size = 0, cv_updated_at = ?
+     WHERE id = ?`,
+    [nowIso(), userId]
+  );
+  const updated = await get('SELECT * FROM users WHERE id = ?', [userId]);
+  await logAction(actorId, 'delete_cv', 'user', userId);
   res.json(mapUser(updated));
 });
 
@@ -890,8 +1246,98 @@ app.get('/api/startups', async (req, res) => {
   res.json(rows.map(mapStartup));
 });
 
+app.get('/api/startup-templates', async (req, res) => {
+  res.json(
+    STARTUP_TEMPLATES.map((template) => ({
+      key: template.key,
+      name: template.name,
+      segment: template.segment,
+      description: template.description,
+      specialists: template.specialists || [],
+      default_tasks: template.default_tasks || []
+    }))
+  );
+});
+
 app.post('/api/startups', async (req, res) => {
-  const s = req.body;
+  const s = req.body || {};
+  if (!s.id || !String(s.nomi || '').trim()) {
+    return res.status(400).send('id va nomi talab qilinadi');
+  }
+
+  const template = getTemplateByKey(s.template_key);
+  const specialistsInput = Array.isArray(s.kerakli_mutaxassislar)
+    ? s.kerakli_mutaxassislar
+    : String(s.kerakli_mutaxassislar || '').split(/[,\n;|]+/);
+  const specialists = specialistsInput.map((item) => String(item || '').trim()).filter(Boolean);
+  const normalizedSpecialists = specialists.length > 0
+    ? specialists
+    : (template?.specialists || []);
+  if (normalizedSpecialists.length === 0) {
+    return res.status(400).send('Kerakli mutaxassislar talab qilinadi');
+  }
+
+  const startupCreatedAt = s.yaratilgan_vaqt || nowIso();
+  const startupMembers = Array.isArray(s.a_zolar) && s.a_zolar.length > 0
+    ? s.a_zolar.map((m) => ({
+      user_id: m.user_id,
+      name: m.name || m.user_id,
+      role: m.role || 'Azo',
+      joined_at: m.joined_at || startupCreatedAt
+    }))
+    : [{
+      user_id: s.egasi_id,
+      name: s.egasi_name || s.egasi_id,
+      role: 'Asoschi',
+      joined_at: startupCreatedAt
+    }];
+
+  const seededTasks = (template?.default_tasks || []).map((task) => {
+    const deadline = task.days_offset
+      ? toDateOnly(new Date(Date.now() + Number(task.days_offset) * 24 * 60 * 60 * 1000))
+      : '';
+    return {
+      id: makeId('t'),
+      startup_id: s.id,
+      title: task.title,
+      description: task.description || '',
+      assigned_to_id: s.egasi_id,
+      assigned_to_name: s.egasi_name || s.egasi_id,
+      deadline,
+      priority: normalizeTaskPriority(task.priority),
+      estimate_hours: Number(task.estimate_hours || 0),
+      actual_hours: 0,
+      calendar_tag: task.calendar_tag || 'backlog',
+      created_by: s.egasi_id,
+      status: 'todo',
+      created_at: startupCreatedAt,
+      updated_at: startupCreatedAt
+    };
+  });
+
+  const incomingTasks = Array.isArray(s.tasks)
+    ? s.tasks
+      .map((task) => ({
+        id: task.id || makeId('t'),
+        startup_id: s.id,
+        title: String(task.title || '').trim(),
+        description: task.description || '',
+        assigned_to_id: task.assigned_to_id || s.egasi_id,
+        assigned_to_name: task.assigned_to_name || s.egasi_name || s.egasi_id,
+        deadline: toDateOnly(task.deadline),
+        priority: normalizeTaskPriority(task.priority),
+        estimate_hours: Number(task.estimate_hours || 0),
+        actual_hours: Number(task.actual_hours || 0),
+        calendar_tag: task.calendar_tag || 'backlog',
+        created_by: task.created_by || s.egasi_id,
+        status: normalizeTaskStatus(task.status),
+        created_at: task.created_at || startupCreatedAt,
+        updated_at: task.updated_at || startupCreatedAt
+      }))
+      .filter((task) => !!task.title)
+    : [];
+  const startupTasks = incomingTasks.length > 0 ? incomingTasks : seededTasks;
+
   const proRestrictionsEnabled = await canUseProRestrictions();
   if (s.egasi_id && proRestrictionsEnabled) {
     const owner = await get('SELECT * FROM users WHERE id = ?', [s.egasi_id]);
@@ -912,32 +1358,63 @@ app.post('/api/startups', async (req, res) => {
     `INSERT INTO startups (
       id, nomi, tavsif, category, kerakli_mutaxassislar, logo, egasi_id, egasi_name,
       status, yaratilgan_vaqt, a_zolar, tasks, views, github_url, website_url,
-      segment, lifecycle_status, success_fee_percent, registry_notes
+      segment, template_key, template_name, lifecycle_status, success_fee_percent, registry_notes
     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       s.id,
       s.nomi,
       s.tavsif,
       s.category,
-      JSON.stringify(s.kerakli_mutaxassislar || []),
+      JSON.stringify(normalizedSpecialists),
       s.logo,
       s.egasi_id,
       s.egasi_name,
       s.status || 'pending_admin',
-      s.yaratilgan_vaqt || new Date().toISOString(),
-      JSON.stringify(s.a_zolar || []),
-      JSON.stringify(s.tasks || []),
+      startupCreatedAt,
+      JSON.stringify(startupMembers),
+      JSON.stringify(startupTasks),
       s.views || 0,
       s.github_url || '',
       s.website_url || '',
-      s.segment || 'IT Founder + Developer',
+      s.segment || template?.segment || 'IT asoschisi + dasturchi',
+      template?.key || '',
+      template?.name || '',
       s.lifecycle_status || 'live',
       Number.isFinite(Number(s.success_fee_percent)) ? Number(s.success_fee_percent) : 1.5,
       s.registry_notes || ''
     ]
   );
   await ensureWorkspace(s.id, s.egasi_id || 'system');
+
+  for (const task of startupTasks) {
+    await run(
+      `INSERT INTO tasks (
+        id, startup_id, title, description, assigned_to_id, assigned_to_name, deadline, status, created_at,
+        priority, estimate_hours, actual_hours, calendar_tag, created_by, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        task.id,
+        s.id,
+        task.title,
+        task.description || '',
+        task.assigned_to_id || s.egasi_id,
+        task.assigned_to_name || s.egasi_name || s.egasi_id,
+        toDateOnly(task.deadline),
+        normalizeTaskStatus(task.status),
+        task.created_at || startupCreatedAt,
+        normalizeTaskPriority(task.priority),
+        Number(task.estimate_hours || 0),
+        Number(task.actual_hours || 0),
+        task.calendar_tag || 'backlog',
+        task.created_by || s.egasi_id,
+        task.updated_at || startupCreatedAt
+      ]
+    );
+  }
+  await syncStartupTasks(s.id);
+
   await run(
     `INSERT INTO workspace_activity (id, startup_id, user_id, activity_type, payload, hours_spent, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -946,7 +1423,11 @@ app.post('/api/startups', async (req, res) => {
       s.id,
       s.egasi_id || 'system',
       'workspace_created',
-      JSON.stringify({ startup_name: s.nomi }),
+      JSON.stringify({
+        startup_name: s.nomi,
+        template_key: template?.key || null,
+        seeded_tasks: startupTasks.length
+      }),
       0,
       nowIso()
     ]
@@ -1180,11 +1661,14 @@ app.get('/api/startups/:id/recommendations', async (req, res) => {
   memberIds.add(startup.egasi_id);
 
   const users = await all('SELECT * FROM users WHERE banned = 0');
+  const tasks = await all('SELECT * FROM tasks');
+  const reviews = await all('SELECT * FROM peer_reviews');
   const pendingInvites = await all(
     `SELECT invitee_id FROM startup_invitations WHERE startup_id = ? AND status = 'pending'`,
     [startupId]
   );
   const pendingInviteIds = new Set(pendingInvites.map((p) => p.invitee_id));
+  const today = startOfDay(new Date());
 
   const normalizeText = (value) =>
     String(value || '')
@@ -1206,6 +1690,49 @@ app.get('/api/startups/:id/recommendations', async (req, res) => {
         if (parts.length === 0) return false;
         return parts.some((p) => haystack.includes(p));
       });
+
+      if (matched.length === 0) return null;
+
+      const userTasks = tasks.filter((task) => task.assigned_to_id === u.id);
+      const doneCount = userTasks.filter((task) => task.status === 'done').length;
+      const openTasks = userTasks.filter((task) => task.status !== 'done');
+      const nearDeadlineLoad = openTasks.filter((task) => {
+        const deadline = safeDate(task.deadline);
+        if (!deadline) return false;
+        return deadline <= endOfDay(new Date(today.getTime() + 5 * 24 * 60 * 60 * 1000));
+      }).length;
+
+      const userReviews = reviews.filter((review) => review.to_user_id === u.id);
+      const avgRating = userReviews.length
+        ? userReviews.reduce((acc, review) => acc + Number(review.rating || 0), 0) / userReviews.length
+        : 0;
+      const completionRate = userTasks.length ? doneCount / userTasks.length : 0.5;
+      const reputationScore = clamp(Math.round(((avgRating / 5) * 60) + (completionRate * 40)), 0, 100);
+      const availabilityScore = clamp(100 - (openTasks.length * 12) - (nearDeadlineLoad * 8), 10, 100);
+      const specialtyScore = clamp(Math.round((matched.length / needed.length) * 100), 0, 100);
+      const proBonus = u.is_pro ? 8 : 0;
+      const finalScore = Math.round(
+        clamp(
+          specialtyScore * 0.45 +
+          reputationScore * 0.30 +
+          availabilityScore * 0.25 +
+          proBonus,
+          1,
+          100
+        )
+      );
+
+      const reasons = [];
+      reasons.push(`${matched.length} ta mutaxassislik mos: ${matched.slice(0, 3).join(', ')}`);
+      reasons.push(`Reputatsiya ${reputationScore}/100 (baho ${avgRating.toFixed(1)} / 5)`);
+      reasons.push(`Bandlik darajasi ${availabilityScore}/100 (ochiq vazifa ${openTasks.length} ta)`);
+      if (u.is_pro) reasons.push('Pro foydalanuvchi');
+
+      const confidence =
+        specialtyScore >= 70 && reputationScore >= 55 ? 'high'
+          : specialtyScore >= 45 ? 'medium'
+            : 'low';
+
       return {
         id: u.id,
         name: u.name,
@@ -1214,12 +1741,21 @@ app.get('/api/startups/:id/recommendations', async (req, res) => {
         skills: u.skills || [],
         is_pro: !!u.is_pro,
         matched_specialties: matched,
-        match_score: matched.length
+        match_score: finalScore,
+        specialty_score: specialtyScore,
+        reputation_score: reputationScore,
+        availability_score: availabilityScore,
+        confidence,
+        reason: reasons.slice(0, 4),
+        open_tasks: openTasks.length,
+        avg_rating: Number(avgRating.toFixed(2))
       };
     })
+    .filter(Boolean)
     .filter((u) => u.match_score > 0)
     .sort((a, b) => {
       if (b.match_score !== a.match_score) return b.match_score - a.match_score;
+      if (b.reputation_score !== a.reputation_score) return b.reputation_score - a.reputation_score;
       return a.name.localeCompare(b.name);
     })
     .slice(0, 20);
@@ -1409,38 +1945,276 @@ app.post('/api/invitations/:id/respond', async (req, res) => {
 });
 
 // Tasks
+app.get('/api/startups/:id/tasks', async (req, res) => {
+  const startupId = req.params.id;
+  const userId = req.query.userId;
+  if (!userId) return res.status(400).send('userId talab qilinadi');
+
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
+  const startup = mapStartup(startupRow);
+  if (!isStartupMember(startup, userId)) return res.status(403).send('Vazifalarni faqat startup azolari kora oladi');
+
+  const statusFilter = String(req.query.status || '').trim().toLowerCase();
+  const q = String(req.query.q || '').toLowerCase().trim();
+  const due = String(req.query.due || '').toLowerCase().trim();
+  const page = Math.max(1, Number(req.query.page || 1));
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit || 40)));
+
+  const rows = await all('SELECT * FROM tasks WHERE startup_id = ? ORDER BY created_at DESC', [startupId]);
+  const allTasks = rows.map(mapTask);
+  const todayStart = startOfDay(new Date());
+  const todayEnd = endOfDay(new Date());
+  const weekEnd = endOfDay(new Date(todayStart.getTime() + 6 * 24 * 60 * 60 * 1000));
+
+  const filtered = allTasks.filter((task) => {
+    if (statusFilter && task.status !== statusFilter) return false;
+    if (q) {
+      const text = `${task.title || ''} ${task.description || ''} ${task.assigned_to_name || ''}`.toLowerCase();
+      if (!text.includes(q)) return false;
+    }
+    if (due) {
+      const deadline = safeDate(task.deadline);
+      if (due === 'overdue' && !(deadline && deadline < todayStart && task.status !== 'done')) return false;
+      if (due === 'today' && !(deadline && deadline >= todayStart && deadline <= todayEnd)) return false;
+      if (due === 'week' && !(deadline && deadline >= todayStart && deadline <= weekEnd)) return false;
+      if (due === 'none' && !!deadline) return false;
+    }
+    return true;
+  });
+
+  const total = filtered.length;
+  const offset = (page - 1) * limit;
+  const items = filtered.slice(offset, offset + limit);
+
+  res.json({
+    total,
+    page,
+    limit,
+    items
+  });
+});
+
 app.post('/api/tasks', async (req, res) => {
-  const t = req.body;
+  const t = req.body || {};
+  const startupId = t.startup_id;
+  const title = String(t.title || '').trim();
+  if (!startupId || !title) return res.status(400).send('startup_id va title talab qilinadi');
+
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
+  const startup = mapStartup(startupRow);
+
+  const actorId = t.actor_id || t.created_by || t.assigned_to_id;
+  if (actorId && !isStartupMember(startup, actorId)) {
+    return res.status(403).send('Vazifa yaratish faqat startup azolariga ruxsat');
+  }
+
+  const createdAt = t.created_at || nowIso();
+  const id = t.id || makeId('t');
+  const deadline = toDateOnly(t.deadline);
+  if (t.deadline && !deadline) return res.status(400).send('deadline formati notogri');
+
   await run(
-    `INSERT INTO tasks (id, startup_id, title, description, assigned_to_id, assigned_to_name, deadline, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tasks (
+      id, startup_id, title, description, assigned_to_id, assigned_to_name, deadline, status, created_at,
+      priority, estimate_hours, actual_hours, calendar_tag, created_by, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      t.id,
-      t.startup_id,
-      t.title,
-      t.description,
-      t.assigned_to_id,
-      t.assigned_to_name,
-      t.deadline || '',
-      t.status || 'todo',
-      t.created_at || new Date().toISOString()
+      id,
+      startupId,
+      title,
+      t.description || '',
+      t.assigned_to_id || actorId || startup.egasi_id,
+      t.assigned_to_name || startup.a_zolar.find((m) => m.user_id === (t.assigned_to_id || actorId))?.name || 'Belgilanmagan',
+      deadline,
+      normalizeTaskStatus(t.status || 'todo'),
+      createdAt,
+      normalizeTaskPriority(t.priority),
+      Number(t.estimate_hours || 0),
+      Number(t.actual_hours || 0),
+      t.calendar_tag || 'backlog',
+      actorId || startup.egasi_id,
+      createdAt
     ]
   );
-  const created = await get('SELECT * FROM tasks WHERE id = ?', [t.id]);
+
+  await syncStartupTasks(startupId);
+
+  await run(
+    `INSERT INTO workspace_activity (id, startup_id, user_id, activity_type, payload, hours_spent, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      makeId('act'),
+      startupId,
+      actorId || startup.egasi_id || 'system',
+      'task_created',
+      JSON.stringify({ task_id: id, title }),
+      0,
+      createdAt
+    ]
+  );
+
+  const created = await get('SELECT * FROM tasks WHERE id = ?', [id]);
   res.status(201).json(mapTask(created));
 });
 
 app.put('/api/tasks/:id/status', async (req, res) => {
-  const status = req.body?.status;
-  if (!status) return res.status(400).send('status talab qilinadi');
-  await run('UPDATE tasks SET status = ? WHERE id = ?', [status, req.params.id]);
-  const updated = await get('SELECT * FROM tasks WHERE id = ?', [req.params.id]);
+  const taskId = req.params.id;
+  const rawStatus = req.body?.status;
+  if (!rawStatus) return res.status(400).send('status talab qilinadi');
+  const status = normalizeTaskStatus(rawStatus);
+
+  const existing = await get('SELECT * FROM tasks WHERE id = ?', [taskId]);
+  if (!existing) return res.status(404).send('Vazifa topilmadi');
+
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [existing.startup_id]);
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
+  const startup = mapStartup(startupRow);
+
+  const actorId = req.body?.actor_id;
+  if (actorId && !isStartupMember(startup, actorId)) {
+    return res.status(403).send('Vazifa statusini faqat startup azolari ozgartira oladi');
+  }
+
+  const updatedAt = nowIso();
+  await run(
+    'UPDATE tasks SET status = ?, actual_hours = ?, updated_at = ? WHERE id = ?',
+    [
+      status,
+      Number(req.body?.actual_hours ?? existing.actual_hours ?? 0),
+      updatedAt,
+      taskId
+    ]
+  );
+  await syncStartupTasks(existing.startup_id);
+
+  await run(
+    `INSERT INTO workspace_activity (id, startup_id, user_id, activity_type, payload, hours_spent, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      makeId('act'),
+      existing.startup_id,
+      actorId || existing.assigned_to_id || 'system',
+      'task_status_changed',
+      JSON.stringify({ task_id: taskId, status }),
+      0,
+      updatedAt
+    ]
+  );
+
+  const updated = await get('SELECT * FROM tasks WHERE id = ?', [taskId]);
+  res.json(mapTask(updated));
+});
+
+app.patch('/api/tasks/:id', async (req, res) => {
+  const taskId = req.params.id;
+  const patch = req.body || {};
+  const existing = await get('SELECT * FROM tasks WHERE id = ?', [taskId]);
+  if (!existing) return res.status(404).send('Vazifa topilmadi');
+
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [existing.startup_id]);
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
+  const startup = mapStartup(startupRow);
+
+  const actorId = patch.actor_id;
+  if (actorId && !isStartupMember(startup, actorId)) {
+    return res.status(403).send('Vazifani faqat startup azolari tahrirlashi mumkin');
+  }
+
+  const updates = [];
+  const values = [];
+  if (Object.prototype.hasOwnProperty.call(patch, 'title')) {
+    updates.push('title = ?');
+    values.push(String(patch.title || '').trim());
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'description')) {
+    updates.push('description = ?');
+    values.push(patch.description || '');
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'assigned_to_id')) {
+    updates.push('assigned_to_id = ?');
+    values.push(patch.assigned_to_id || null);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'assigned_to_name')) {
+    updates.push('assigned_to_name = ?');
+    values.push(patch.assigned_to_name || '');
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'deadline')) {
+    const deadline = patch.deadline ? toDateOnly(patch.deadline) : '';
+    if (patch.deadline && !deadline) return res.status(400).send('deadline formati notogri');
+    updates.push('deadline = ?');
+    values.push(deadline);
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'status')) {
+    updates.push('status = ?');
+    values.push(normalizeTaskStatus(patch.status));
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'priority')) {
+    updates.push('priority = ?');
+    values.push(normalizeTaskPriority(patch.priority));
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'estimate_hours')) {
+    updates.push('estimate_hours = ?');
+    values.push(Number(patch.estimate_hours || 0));
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'actual_hours')) {
+    updates.push('actual_hours = ?');
+    values.push(Number(patch.actual_hours || 0));
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'calendar_tag')) {
+    updates.push('calendar_tag = ?');
+    values.push(String(patch.calendar_tag || 'backlog').trim());
+  }
+
+  if (updates.length === 0) return res.status(400).send('Yangilash uchun maydon topilmadi');
+  updates.push('updated_at = ?');
+  values.push(nowIso());
+  values.push(taskId);
+  await run(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`, values);
+  await syncStartupTasks(existing.startup_id);
+
+  const updated = await get('SELECT * FROM tasks WHERE id = ?', [taskId]);
   res.json(mapTask(updated));
 });
 
 app.delete('/api/tasks/:id', async (req, res) => {
-  await run('DELETE FROM tasks WHERE id = ?', [req.params.id]);
+  const taskId = req.params.id;
+  const existing = await get('SELECT * FROM tasks WHERE id = ?', [taskId]);
+  if (!existing) return res.status(204).end();
+
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [existing.startup_id]);
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
+  const startup = mapStartup(startupRow);
+  const actorId = req.query?.actor_id;
+  if (actorId && !isStartupMember(startup, actorId)) {
+    return res.status(403).send('Vazifani ochirish faqat startup azolariga ruxsat');
+  }
+
+  await run('DELETE FROM tasks WHERE id = ?', [taskId]);
+  await syncStartupTasks(existing.startup_id);
   res.status(204).end();
+});
+
+app.get('/api/startups/:id/calendar', async (req, res) => {
+  const startupId = req.params.id;
+  const userId = req.query.userId;
+  if (!userId) return res.status(400).send('userId talab qilinadi');
+
+  const startupRow = await get('SELECT * FROM startups WHERE id = ?', [startupId]);
+  if (!startupRow) return res.status(404).send('Startup topilmadi');
+  const startup = mapStartup(startupRow);
+  if (!isStartupMember(startup, userId)) return res.status(403).send('Kalendar faqat startup azolari uchun');
+
+  const rows = await all('SELECT * FROM tasks WHERE startup_id = ? ORDER BY deadline ASC', [startupId]);
+  const tasks = rows.map(mapTask);
+  const calendar = buildCalendarSummary(tasks);
+  res.json({
+    startup_id: startupId,
+    summary: calendar.summary,
+    events: calendar.events
+  });
 });
 
 // Categories
@@ -1515,9 +2289,22 @@ app.get('/api/startups/:id/workspace', async (req, res) => {
      ORDER BY created_at DESC`,
     [startupId]
   );
+  const taskRows = await all('SELECT * FROM tasks WHERE startup_id = ? ORDER BY created_at DESC', [startupId]);
+  const mappedTasks = taskRows.map(mapTask);
+  const activityRows = await all(
+    'SELECT * FROM workspace_activity WHERE startup_id = ? ORDER BY created_at DESC',
+    [startupId]
+  );
 
   const reputation = await buildStartupReputationGraph(startupId);
   const aiRisk = await buildStartupAiRisk(startupId);
+  const insights = buildWorkspaceInsights({
+    startup,
+    tasks: mappedTasks,
+    decisions,
+    memberVotes: voteCases,
+    activities: activityRows
+  });
 
   const decisionVoteSummary = decisions.map((d) => {
     const votes = decisionVotes.filter((v) => v.decision_id === d.id);
@@ -1561,10 +2348,14 @@ app.get('/api/startups/:id/workspace', async (req, res) => {
     workspace,
     startup: {
       id: startup.id,
+      segment: startup.segment,
+      template_key: startup.template_key || '',
+      template_name: startup.template_name || '',
       lifecycle_status: startup.lifecycle_status,
       success_fee_percent: startup.success_fee_percent,
       registry_notes: startup.registry_notes
     },
+    tasks: mappedTasks,
     reviews: reviews.map((r) => ({
       id: r.id,
       startup_id: r.startup_id,
@@ -1617,7 +2408,10 @@ app.get('/api/startups/:id/workspace', async (req, res) => {
       notes: i.notes || '',
       created_at: i.created_at
     })),
-    ai_risk: aiRisk
+    ai_risk: aiRisk,
+    kpi: insights.kpi,
+    weekly_report: insights.weekly_report,
+    calendar_summary: insights.calendar_summary
   });
 });
 
@@ -2194,4 +2988,3 @@ const start = async () => {
 };
 
 start();
-
