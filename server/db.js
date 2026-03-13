@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://mongo:oOtQMUCpqpIzynSCUEVZfCQQBCMQaxBQ@tramway.proxy.rlwy.net:10002';
-const MONGO_DB_NAME = process.env.MONGO_DB_NAME || 'GarajHub';
+const MONGO_DB_NAME = process.env.MONGO_DB_NAME || 'GarajHubsayt';
 
 let db = null;
 
