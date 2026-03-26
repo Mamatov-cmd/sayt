@@ -1,9 +1,9 @@
 {
-  "name": "garajhub",
+  "name": "co-foundix",
   "private": true,
   "version": "8.0.3",
   "type": "module",
-  "description": "GarajHub - Startup Platform for Uzbekistan",
+  "description": "CO Foundix - Startup Platform for Uzbekistan",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

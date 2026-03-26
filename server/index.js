@@ -6,6 +6,8 @@ import { init, run, get, all } from './db.js';
 
 const app = express();
 const PORT = process.env.PORT || 5174;
+const DEFAULT_PRO_PLAN_NAME = 'CO Foundix Pro';
+const LEGACY_PRO_PLAN_NAME = 'GarajHub Pro';
 
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
@@ -285,9 +287,12 @@ const isStartupMember = (startup, userId) => {
 const getPlatformConfig = async () => {
   const platform = await get('SELECT * FROM platform_settings WHERE id = 1');
   const billing = await get('SELECT * FROM billing_settings WHERE id = 1');
+  const planName = !platform?.plan_name || platform.plan_name === LEGACY_PRO_PLAN_NAME
+    ? DEFAULT_PRO_PLAN_NAME
+    : platform.plan_name;
   return {
     pro_enabled: (platform?.pro_enabled ?? 1) === 1,
-    plan_name: platform?.plan_name || 'GarajHub Pro',
+    plan_name: planName,
     price_text: platform?.price_text || '149 000 UZS / oy',
     startup_limit_free: Number(platform?.startup_limit_free ?? 1),
     card_holder: billing?.card_holder || '',
@@ -865,7 +870,7 @@ app.put('/api/admin/pro/config', async (req, res) => {
      WHERE id = 1`,
     [
       toBoolInt(body.pro_enabled !== false),
-      body.plan_name || 'GarajHub Pro',
+      body.plan_name || DEFAULT_PRO_PLAN_NAME,
       body.price_text || '149 000 UZS / oy',
       Number(body.startup_limit_free || 1),
       now

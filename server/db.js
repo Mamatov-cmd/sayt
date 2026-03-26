@@ -1,7 +1,9 @@
 import mongoose from 'mongoose';
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://mongo:reYuLzKSPUsfCiegxYZFfcwBCJkRYZIC@hopper.proxy.rlwy.net:10958';
-const MONGO_DB_NAME = process.env.MONGO_DB_NAME || 'GarajHub';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://mongo:oOtQMUCpqpIzynSCUEVZfCQQBCMQaxBQ@tramway.proxy.rlwy.net:10002';
+const MONGO_DB_NAME = process.env.MONGO_DB_NAME || 'GarajHubsayt';
+const DEFAULT_PRO_PLAN_NAME = 'CO Foundix Pro';
+const LEGACY_PRO_PLAN_NAME = 'GarajHub Pro';
 
 let db = null;
 
@@ -537,11 +539,21 @@ const ensureDefaults = async () => {
     await coll('platform_settings').insertOne({
       id: 1,
       pro_enabled: 1,
-      plan_name: 'GarajHub Pro',
+      plan_name: DEFAULT_PRO_PLAN_NAME,
       price_text: '149 000 UZS / oy',
       startup_limit_free: 1,
       updated_at: now
     });
+  } else if (!platformExists.plan_name || platformExists.plan_name === LEGACY_PRO_PLAN_NAME) {
+    await coll('platform_settings').updateOne(
+      { id: 1 },
+      {
+        $set: {
+          plan_name: DEFAULT_PRO_PLAN_NAME,
+          updated_at: now
+        }
+      }
+    );
   }
 
   const billingExists = await coll('billing_settings').findOne({ id: 1 });

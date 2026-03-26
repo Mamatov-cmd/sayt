@@ -2,8 +2,12 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { getAIMentorResponse } from './services/geminiService';
 import { convertToBase64, validateImageFile, validateCvFile, formatFileSize } from './utils/fileHelpers';
 import { initDatabase, dbOperations, saveDatabase } from './database';
-import Logo from './r.png';
+import Logo from './cofoundix.jpg';
 
+const BRAND_NAME = 'CO Foundix';
+const DEFAULT_PRO_PLAN_NAME = `${BRAND_NAME} Pro`;
+const THEME_STORAGE_KEY = 'cofoundix_theme';
+const LEGACY_THEME_STORAGE_KEY = 'garajhub_theme';
 const ADMIN_EMAIL = 'mamatovo354@gmail.com';
 const ADMIN_PASS = '123@Ozod';
 const DEFAULT_CATEGORIES = [
@@ -250,7 +254,7 @@ const App = () => {
   const [auditLogs, setAuditLogs] = useState([]);
   const [proConfig, setProConfig] = useState({
     pro_enabled: true,
-    plan_name: 'GarajHub Pro',
+    plan_name: DEFAULT_PRO_PLAN_NAME,
     price_text: '149 000 UZS / oy',
     startup_limit_free: 1,
     card_holder: '',
@@ -260,7 +264,7 @@ const App = () => {
   });
   const [adminProConfigDraft, setAdminProConfigDraft] = useState({
     pro_enabled: true,
-    plan_name: 'GarajHub Pro',
+    plan_name: DEFAULT_PRO_PLAN_NAME,
     price_text: '149 000 UZS / oy',
     startup_limit_free: 1,
     card_holder: '',
@@ -315,7 +319,10 @@ const App = () => {
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
   const [viewedUser, setViewedUser] = useState(null);
   const [viewedUserReputation, setViewedUserReputation] = useState(null);
-  const [isDarkTheme, setIsDarkTheme] = useState(() => localStorage.getItem('garajhub_theme') === 'dark');
+  const [isDarkTheme, setIsDarkTheme] = useState(() => {
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || localStorage.getItem(LEGACY_THEME_STORAGE_KEY);
+    return savedTheme === 'dark';
+  });
 
   const chatEndRef = useRef(null);
   const startupChatEndRef = useRef(null);
@@ -552,7 +559,8 @@ const App = () => {
   }, [startupChatMessages, activeDetailTab]);
 
   useEffect(() => {
-    localStorage.setItem('garajhub_theme', isDarkTheme ? 'dark' : 'light');
+    localStorage.setItem(THEME_STORAGE_KEY, isDarkTheme ? 'dark' : 'light');
+    localStorage.removeItem(LEGACY_THEME_STORAGE_KEY);
   }, [isDarkTheme]);
 
   useEffect(() => {
@@ -1836,7 +1844,7 @@ const App = () => {
         </div>
         <h3 className="text-lg font-black tracking-tight">{title}</h3>
         <p className="text-[13px] text-gray-500">
-          {proConfig?.plan_name || 'GarajHub Pro'} bilan ushbu bo'limlar ochiladi. To'lov yuborib Pro holatga o'ting.
+          {proConfig?.plan_name || DEFAULT_PRO_PLAN_NAME} bilan ushbu bo'limlar ochiladi. To'lov yuborib Pro holatga o'ting.
         </p>
         <div className="flex justify-center">
           <Button onClick={() => setShowProModal(true)} className="px-7">Pro ga o'tish</Button>
@@ -1923,8 +1931,8 @@ const App = () => {
       <aside className={`fixed lg:relative z-[90] w-[260px] md:w-[240px] h-full bg-white border-r border-gray-100 flex flex-col p-6 md:p-8 transition-transform duration-300 ease-in-out ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className="flex items-center justify-between mb-10">
           <div className="flex items-center gap-3 cursor-pointer group" onClick={() => navigateTo('explore')}>
-            <div className="w-10 h-10 flex items-center justify-center transition-transform"><img src={Logo} alt="Logo" /></div>
-            <span className="text-[18px] font-extrabold tracking-tighter text-gray-900">GarajHub</span>
+            <div className="w-10 h-10 flex items-center justify-center transition-transform"><img src={Logo} alt={BRAND_NAME} /></div>
+            <span className="text-[18px] font-extrabold tracking-tighter text-gray-900">{BRAND_NAME}</span>
           </div>
           <button onClick={() => setIsMobileMenuOpen(false)} className="lg:hidden text-gray-400 p-2"><i className="fa-solid fa-xmark text-lg"></i></button>
         </div>
@@ -3778,8 +3786,8 @@ const App = () => {
             <div className="ios-topbar rounded-[24px] border border-white/70 bg-white/75 backdrop-blur-xl px-4 md:px-6 py-3 flex items-center justify-between shadow-lg">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <img src={Logo} alt="GarajHub" className="w-7 h-7 rounded-lg" />
-                  <p className="text-[28px] leading-none font-black tracking-[-0.04em]">GarajHub</p>
+                  <img src={Logo} alt={BRAND_NAME} className="w-7 h-7 rounded-lg" />
+                  <p className="text-[28px] leading-none font-black tracking-[-0.04em]">{BRAND_NAME}</p>
                 </div>
                 <p className="text-[9px] uppercase tracking-[0.2em] font-bold text-slate-500 mt-1">{activeTabTitle}</p>
               </div>
@@ -3898,16 +3906,34 @@ const App = () => {
       {showAuthModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-md" onClick={() => setShowAuthModal(false)} />
-          <div className="relative bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 md:p-10 animate-in slide-in-from-bottom-12 duration-500 overflow-y-auto max-h-[95vh] custom-scrollbar">
+          <div className="relative w-full max-w-md animate-in slide-in-from-bottom-12 duration-500">
+            <div className="absolute inset-x-10 -top-6 h-32 rounded-full bg-gradient-to-r from-sky-200/70 via-white/20 to-emerald-200/70 blur-3xl pointer-events-none" />
+            <div className="relative bg-white/95 border border-white/80 w-full rounded-[32px] shadow-[0_32px_80px_rgba(15,23,42,0.22)] p-6 md:p-10 overflow-y-auto max-h-[95vh] custom-scrollbar">
             <div className="text-center space-y-4 md:space-y-6 mb-8">
-              <div className="w-14 h-14 md:w-16 md:h-16 bg-black text-white flex items-center justify-center text-3xl md:text-4xl font-black mx-auto rounded-2xl shadow-xl">G</div>
-              <div>
+              <div className="mx-auto w-fit rounded-[28px] bg-gradient-to-br from-slate-950 via-slate-900 to-black px-4 py-3 shadow-2xl border border-slate-800">
+                <div className="flex items-center gap-3">
+                  <img src={Logo} alt={BRAND_NAME} className="w-12 h-12 md:w-14 md:h-14 rounded-2xl object-cover border border-white/10 shadow-lg" />
+                  <div className="text-left">
+                    <p className="text-[9px] md:text-[10px] uppercase tracking-[0.28em] font-bold text-slate-300">Platform</p>
+                    <p className="text-base md:text-lg font-black leading-none text-white">{BRAND_NAME}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-slate-200 bg-slate-50 text-[10px] uppercase tracking-[0.25em] font-bold text-slate-500">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  {authMode === 'login' ? 'Tizimga kirish' : 'Yangi akkaunt'}
+                </div>
                 <h3 className="text-2xl md:text-3xl font-extrabold italic tracking-tighter text-gray-900 uppercase">{authMode === 'login' ? 'Kirish' : 'Ro\'yxat'}</h3>
-                <p className="text-gray-400 text-[12px] md:text-[13px] mt-2 px-2">Startup ekotizimiga hush kelibsiz.</p>
+                <p className="text-slate-500 text-[12px] md:text-[13px] leading-6 px-2">
+                  {authMode === 'login'
+                    ? `${BRAND_NAME} ekotizimiga qayting va jamoangiz bilan ishni davom ettiring.`
+                    : `${BRAND_NAME} ekotizimiga qo'shiling va profilingizni bir necha qadamda yarating.`}
+                </p>
               </div>
             </div>
             
-            <form onSubmit={handleAuth} className="space-y-4">
+            <form onSubmit={handleAuth} className="space-y-5">
               {authMode === 'register' && (
                 <div className="space-y-4 animate-in fade-in duration-300">
                   <Input required name="name" label="To'liq ism" icon="fa-signature" placeholder="Ism Sharif" />
@@ -3919,10 +3945,10 @@ const App = () => {
                 <Input required name="email" type="email" label="Elektron pochta" icon="fa-at" placeholder="namuna@mail.com" />
                 <Input required name="password" type="password" label="Parol" icon="fa-lock" placeholder="********" />
               </div>
-              <Button type="submit" className="w-full h-12 md:h-12 mt-4 font-bold uppercase tracking-widest italic shadow-lg">Davom etish</Button>
+              <Button type="submit" className="w-full h-12 md:h-12 mt-4 font-bold uppercase tracking-widest italic shadow-xl bg-gradient-to-r from-slate-950 via-slate-900 to-black hover:from-black hover:via-slate-900 hover:to-slate-800">Davom etish</Button>
             </form>
             
-            <div className="text-center space-y-4 pt-6 border-t border-gray-50 mt-8">
+            <div className="text-center space-y-4 pt-7 border-t border-slate-100 mt-8">
               <button 
                 type="button"
                 onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} 
@@ -3937,6 +3963,7 @@ const App = () => {
               >
                 Bekor qilish
               </button>
+            </div>
             </div>
           </div>
         </div>
@@ -4007,7 +4034,7 @@ const App = () => {
         </div>
       </Modal>
 
-      <Modal isOpen={showProModal} onClose={() => { setShowProModal(false); setProReceiptBase64(''); }} title={proConfig.plan_name || 'GarajHub Pro'} size="lg">
+      <Modal isOpen={showProModal} onClose={() => { setShowProModal(false); setProReceiptBase64(''); }} title={proConfig.plan_name || DEFAULT_PRO_PLAN_NAME} size="lg">
         <div className="space-y-7">
           <div className="bg-gradient-to-r from-slate-900 via-gray-900 to-black rounded-2xl p-5 text-white space-y-2">
             <p className="text-[11px] uppercase tracking-[0.2em] text-slate-300 font-bold">To'lov ma'lumotlari</p>

@@ -100,7 +100,7 @@ Qo'shimcha savollaringiz bo'lsa, bemalol so'rang!`;
 4. Mas'uliyat: Har kim o'z vazifasiga javobgar bo'lishi
 5. Moslashuvchanlik: Tez o'rganish va o'zgarishlarga tayyor bo'lish
 
-GarajHub orqali mutaxassislar topishingiz mumkin!`;
+CO Foundix orqali mutaxassislar topishingiz mumkin!`;
   }
 
   if (lowerMessage.includes("marketing") || lowerMessage.includes("reklama")) {
